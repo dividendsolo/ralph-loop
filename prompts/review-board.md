@@ -42,12 +42,22 @@ the AFK agent that wrote it does the rework.
         add a Linear comment summarising what must change, and move the Linear
         issue to the "Changes Requested" state. If that state does not exist yet,
         move it to "In Progress" instead and note the fallback in your output.
+        Then notify James (see step e): kickback.
       - ACCEPTABLE and CI green:
         - SHADOW: `gh pr review N --approve --body "..."` and add a Linear comment
           like "Reviewed, acceptable, CI green, ready to merge. Holding for James
-          (shadow mode)." Do NOT merge and do NOT change the status.
+          (shadow mode)." Do NOT merge and do NOT change the status. Then notify
+          James (see step e): approved-holding.
         - LIVE: `gh pr merge N --squash --delete-branch`, then set the Linear
-          issue to "Done" and comment the merge.
+          issue to "Done" and comment the merge. Then notify James (see step e): merged.
+   e. NOTIFY James on Discord with a one-line summary (best-effort: if it fails,
+      note it in your output and carry on, never block the verdict on it):
+        `hermes send --to discord:dividendsolo "<message>"`
+      Message format by outcome:
+        - kickback:          "🔴 <ID> sent back — <one-line reason>. PR #N"
+        - merged (LIVE):     "✅ <ID> merged — <title>. PR #N"
+        - approved-holding (SHADOW): "🟢 <ID> approved, holding for you (shadow). PR #N"
+      Send exactly one notification per ticket reviewed, matching the action taken.
 3. Print a concise per-ticket summary of what you did and why.
 
 ## Guardrails
