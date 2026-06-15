@@ -9,7 +9,8 @@ context window — so any machine with this installed can take the next step.
 
 ```
 bin/
-  ralph-once     Work ONE AFK ticket end-to-end, then stop (worker, hermes).
+  ralph-once     Work ONE AFK ticket end-to-end, then stop (worker, hermes -z, headless).
+  ralph-once-tui Same run in the interactive TUI, so you can watch it work live.
   afk-ralph      Run the worker loop up to N times; stops when the board is clear.
   ralph-init     Readiness check (repo, git identity, hermes, gh, prompt present).
   review-board   One senior-reviewer pass over AFK "In Review" PRs (claude, headless).
@@ -36,10 +37,15 @@ not at `$HOME/code/docket`.
 ## Run
 
 ```bash
-ralph-once          # advance one ticket
+ralph-once          # advance one ticket (headless: only the final summary prints)
+ralph-once-tui      # same, in the TUI, to watch it work live
 afk-ralph 10        # advance up to 10 tickets
 review-board        # one review pass (also runs from cron)
 ```
+
+`ralph-once` runs `hermes -z` (oneshot), which prints ONLY the final summary —
+the terminal stays blank until it finishes. To watch a headless run live, follow
+the agent log in another terminal: `hermes logs -f`. Or use `ralph-once-tui`.
 
 ## Schedule the reviewer
 

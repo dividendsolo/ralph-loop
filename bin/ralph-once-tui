@@ -1,0 +1,26 @@
+#!/bin/bash
+# ralph-once-tui — same board-driven Ralph run as `ralph-once`, but in the
+# interactive TUI so you can watch tool calls and output live.
+# `ralph-once` uses `hermes -z` (oneshot: prints ONLY the final summary, no
+# streaming); this launches the TUI instead. Seed it with the one line printed
+# below and Ralph follows the same procedure file.
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+REPO="${RALPH_REPO:-$HOME/code/docket}"
+PROMPT_FILE="$HOME/.claude/ralph-board.md"
+
+cd "$REPO"
+
+cat <<EOF
+
+Ralph TUI. Paste this as your first message, then watch it work:
+
+  Follow the procedure in $PROMPT_FILE and carry exactly one ticket forward, then stop.
+
+(Tip: to watch the headless 'ralph-once' instead, run 'hermes logs -f' in another terminal.)
+
+EOF
+
+exec hermes --tui --yolo --accept-hooks
