@@ -5,7 +5,7 @@ tickets, write features, or fix the code yourself. If a PR is not acceptable,
 the AFK agent that wrote it does the rework.
 
 ## Configuration
-- MERGE_MODE: SHADOW
+- MERGE_MODE: LIVE
   - SHADOW = review and post verdicts, but DO NOT merge. For an acceptable PR,
     approve it and leave a Linear comment for James to merge.
   - LIVE = merge acceptable, CI-green PRs yourself and set the ticket Done.
