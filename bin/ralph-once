@@ -9,7 +9,9 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 REPO="${RALPH_REPO:-$HOME/code/docket}"
-PROMPT_FILE="$HOME/.claude/ralph-board.md"
+
+# Full worker procedure lives in the `pickup` skill (installed into ~/.hermes/skills).
+PROMPT="Use the pickup skill to pick up and carry exactly ONE ticket forward on the Docket board (Linear project \"Docket phase 1: ingest, feed, reader\", team \"James Gooding\"; repo $REPO), then STOP. Follow the skill's procedure in full. Scope: only issues carrying the \"AFK\" label. If no ticket is eligible, print <promise>NO_TICKETS</promise> and stop."
 
 cd "$REPO"
-hermes -z "$(cat "$PROMPT_FILE")" --yolo --accept-hooks
+hermes -z "$PROMPT" --yolo --accept-hooks

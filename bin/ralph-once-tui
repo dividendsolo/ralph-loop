@@ -9,7 +9,6 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 REPO="${RALPH_REPO:-$HOME/code/docket}"
-PROMPT_FILE="$HOME/.claude/ralph-board.md"
 
 cd "$REPO"
 
@@ -17,7 +16,7 @@ cat <<EOF
 
 Ralph TUI. Paste this as your first message, then watch it work:
 
-  Follow the procedure in $PROMPT_FILE and carry exactly one ticket forward, then stop.
+  Use the pickup skill to pick up and carry exactly one AFK ticket forward on the Docket board, then stop.
 
 (Tip: to watch the headless 'ralph-once' instead, run 'hermes logs -f' in another terminal.)
 

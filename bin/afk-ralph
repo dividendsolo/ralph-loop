@@ -3,7 +3,15 @@
 # Each iteration works one AFK ticket ("Changes Requested" first, then "Todo")
 # from the Docket Linear board. Stops early when the board has nothing eligible.
 # The box is the sandbox; no docker.
-set -euo pipefail
+#
+# Resilience (why this is not just `set -e` + a loop): a single non-zero hermes
+# exit must NOT kill the whole run. The previous version captured hermes output
+# into `result=$(...)` under `set -e`, so any failure aborted the script at that
+# line — *before* `echo "$result"` ran — leaving a bare shell prompt and zero
+# diagnostics. Now each iteration is retried once, the failure reason is logged,
+# and the loop moves on to the next ticket. All output is mirrored to $RALPH_LOG
+# so detached/tmux runs stay inspectable after a disconnect.
+set -uo pipefail
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -14,19 +22,58 @@ if [ -z "$N" ]; then
 fi
 
 REPO="${RALPH_REPO:-$HOME/code/docket}"
-PROMPT_FILE="$HOME/.claude/ralph-board.md"
-PROMPT="$(cat "$PROMPT_FILE")"
+RALPH_LOG="${RALPH_LOG:-$HOME/ralph.log}"
 
-cd "$REPO"
+# The full worker procedure lives in the `pickup` skill (in ~/code/skills,
+# installed into ~/.hermes/skills). This prompt just invokes it; the skill owns
+# pickup priority, claim+unassign, gitflow branch, LEARNINGS, TDD, stop-at-PR.
+PROMPT="Use the pickup skill to pick up and carry exactly ONE ticket forward on the Docket board (Linear project \"Docket phase 1: ingest, feed, reader\", team \"James Gooding\"; repo $REPO), then STOP. Follow the skill's procedure in full. Scope: only issues carrying the \"AFK\" label. If no ticket is eligible, print <promise>NO_TICKETS</promise> and stop."
+cd "$REPO" || { echo "afk-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
+# Mirror banners + hermes output to the persistent log as well as the terminal.
+log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
+
+log "===== afk-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
+
+failures=0
 for ((i=1; i<=N; i++)); do
-  echo "===== ralph board iteration $i / $N ($(date -u +%H:%M:%SZ)) ====="
-  result=$(hermes -z "$PROMPT" --yolo --accept-hooks)
-  echo "$result"
+  log "===== ralph board iteration $i / $N ($(date -u +%H:%M:%SZ)) ====="
+
+  result=""
+  rc=0
+  for attempt in 1 2; do
+    # Capture stdout+stderr together so any failure is preserved and logged.
+    result=$(hermes -z "$PROMPT" --yolo --accept-hooks 2>&1)
+    rc=$?
+    # Success is judged by OUTPUT, not exit code. hermes -z exits non-zero even
+    # on a fully successful ticket (git/PR/hook activity during teardown), so the
+    # exit code is an unreliable success signal. A genuine startup crash produces
+    # EMPTY output — that is the only case worth retrying.
+    if [ -n "${result//[[:space:]]/}" ]; then
+      break
+    fi
+    log "----- iteration $i attempt $attempt produced NO output (hermes exit $rc) — likely a startup crash -----"
+    if [ "$attempt" = 1 ]; then
+      log "retrying in 15s..."
+      sleep 15
+    fi
+  done
+
+  if [ -z "${result//[[:space:]]/}" ]; then
+    log "===== iteration $i: hermes produced no output after 2 attempts (last exit $rc); skipping. ====="
+    failures=$((failures + 1))
+    continue
+  fi
+
+  log "$result"
+  if [ "$rc" -ne 0 ]; then
+    log "(note: hermes exit $rc on a ticket that produced output — expected; success judged by output, not exit code.)"
+  fi
+
   if [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then
-    echo "===== board clear: no eligible tickets after $i iteration(s). ====="
+    log "===== board clear: no eligible tickets after $i iteration(s). ====="
     exit 0
   fi
 done
 
-echo "===== reached $N iteration(s); more tickets may remain. ====="
+log "===== reached $N iteration(s); more tickets may remain (failures this run: $failures). ====="

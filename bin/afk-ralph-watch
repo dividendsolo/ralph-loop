@@ -7,8 +7,14 @@
 # runs the same headless oneshot per ticket as `afk-ralph` and tails the live
 # log alongside, rather than sharing one bloated TUI session across tickets.
 #
+# This is a thin wrapper: the loop, the per-iteration retry, and the persistent
+# $RALPH_LOG mirroring all live in `afk-ralph` — so the resilience fixes apply
+# whether you run `afk-ralph` or `afk-ralph-watch`. This script only adds the
+# live log stream. `set -e` is intentionally NOT used (a non-zero afk-ralph exit
+# should still fall through to the trap so the background tail is cleaned up).
+#
 # For a single ticket you can watch instead, use `ralph-once-tui`.
-set -euo pipefail
+set -uo pipefail
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -17,6 +23,9 @@ if [ -z "$N" ]; then
   echo "Usage: afk-ralph-watch <iterations>" >&2
   exit 1
 fi
+
+RALPH_LOG="${RALPH_LOG:-$HOME/ralph.log}"
+echo "afk-ralph-watch: streaming live agent log; persistent run log at $RALPH_LOG" >&2
 
 # Stream the live agent log (tool calls + reasoning) in the background; stop it
 # when the loop finishes or we are interrupted.

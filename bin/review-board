@@ -1,20 +1,36 @@
 #!/bin/bash
 # review-board — one pass of the Docket PR review loop (senior-reviewer role).
-# Runs headless Claude against the procedure in ~/.claude/review-board.md.
-# Invoked by cron on a schedule, and runnable by hand any time.
+# Runs headless Claude, which loads the `reviewer-pickup` skill (in ~/code/skills,
+# symlinked into ~/.claude/skills) for the full review + LEARNINGS-curation
+# procedure. Invoked by cron on a schedule (every 5 min), runnable by hand too.
+#
+# Single-instance lock: a review pass can take several minutes — longer than the
+# cron interval — so overlapping ticks would race (double comments / double merge
+# on one PR). flock makes a new invocation SKIP if a pass is already running,
+# guarding both cron ticks and manual runs. Polling frequently is cheap because
+# the review procedure is idempotent per head SHA (it skips already-reviewed
+# unchanged PRs), so ticks with nothing new In Review are near-free.
 set -euo pipefail
 
 # Cron runs with a minimal environment; make the toolchain reachable.
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
-PROMPT_FILE="$HOME/.claude/review-board.md"
 REPO="$HOME/code/docket"
 LOG="$HOME/review-board.log"
+LOCKFILE="$HOME/.review-board.lock"
+
+# Acquire the single-instance lock (non-blocking). If held, a pass is already in
+# flight — skip quietly rather than pile on and race it.
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+  echo "===== review-board skipped: a pass is already running ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+  exit 0
+fi
 
 cd "$REPO"
 
 {
   echo "===== review-board run $(date -u +'%Y-%m-%dT%H:%M:%SZ') ====="
-  claude --dangerously-skip-permissions -p "$(cat "$PROMPT_FILE")"
+  claude --dangerously-skip-permissions -p "Use the reviewer-pickup skill to review the Docket board. Review every AFK-labelled issue currently In Review per the skill's full procedure (find PR, idempotency by head SHA, rigorous review with an independent sub-reviewer, decide/act, curate LEARNINGS.md on kickbacks, notify). If nothing is In Review, print \"nothing to review\" and stop."
   echo
 } >> "$LOG" 2>&1

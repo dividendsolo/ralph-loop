@@ -25,7 +25,7 @@ fi
 command -v hermes >/dev/null 2>&1 && echo "✓ hermes on PATH (the worker)" || { echo "✗ hermes not on PATH"; ok=0; }
 command -v gh >/dev/null 2>&1 && echo "✓ gh on PATH" || { echo "✗ gh not on PATH"; ok=0; }
 gh auth status >/dev/null 2>&1 && echo "✓ gh authenticated" || { echo "✗ gh not authenticated"; ok=0; }
-[ -f "$HOME/.claude/ralph-board.md" ] && echo "✓ procedure: ~/.claude/ralph-board.md" || { echo "✗ missing ~/.claude/ralph-board.md"; ok=0; }
+[ -f "$HOME/.hermes/skills/software-development/pickup/SKILL.md" ] && echo "✓ procedure: pickup skill (~/.hermes/skills/.../pickup)" || { echo "✗ pickup skill not installed — run ~/code/skills/install.sh"; ok=0; }
 
 echo
 if [ "$ok" = 1 ]; then
