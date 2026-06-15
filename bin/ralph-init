@@ -1,0 +1,37 @@
+#!/bin/bash
+# ralph-init — readiness check for the board-driven Ralph loop.
+# (Ralph now pulls work from the Linear board, not a PRD, so there is nothing to
+# scaffold; this just verifies the repo and toolchain are ready.)
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+REPO="${RALPH_REPO:-$HOME/code/docket}"
+ok=1
+
+cd "$REPO" 2>/dev/null || { echo "✗ repo not found: $REPO (set RALPH_REPO)"; exit 1; }
+
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "✓ git repo: $REPO"
+else
+  echo "✗ $REPO is not a git repository"; ok=0
+fi
+
+if git config user.email >/dev/null 2>&1 || git config --global user.email >/dev/null 2>&1; then
+  echo "✓ git identity: $(git config user.email || git config --global user.email)"
+else
+  echo "✗ no git identity (git config user.email ...)"; ok=0
+fi
+
+command -v hermes >/dev/null 2>&1 && echo "✓ hermes on PATH (the worker)" || { echo "✗ hermes not on PATH"; ok=0; }
+command -v gh >/dev/null 2>&1 && echo "✓ gh on PATH" || { echo "✗ gh not on PATH"; ok=0; }
+gh auth status >/dev/null 2>&1 && echo "✓ gh authenticated" || { echo "✗ gh not authenticated"; ok=0; }
+[ -f "$HOME/.claude/ralph-board.md" ] && echo "✓ procedure: ~/.claude/ralph-board.md" || { echo "✗ missing ~/.claude/ralph-board.md"; ok=0; }
+
+echo
+if [ "$ok" = 1 ]; then
+  echo "Ready. Ralph pulls AFK tickets in 'Changes Requested' (first) then 'Todo'."
+  echo "Run:  ralph-once      (one ticket)      or   afk-ralph 10   (loop)"
+else
+  echo "Not ready — resolve the ✗ items above."
+  exit 1
+fi

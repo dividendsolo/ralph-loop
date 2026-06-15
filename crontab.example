@@ -1,0 +1,4 @@
+# Ralph reviewer — one senior-review pass at :13 and :43 past every hour.
+# Install with:  crontab -e   (paste the line below)
+# Appends to ~/review-board.log. SHADOW mode by default (no auto-merge).
+13,43 * * * * /home/div/.local/bin/review-board

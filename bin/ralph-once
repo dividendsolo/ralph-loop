@@ -1,0 +1,15 @@
+#!/bin/bash
+# ralph-once — work ONE Linear ticket end to end (board-driven Ralph).
+# Picks the next AFK ticket in "Changes Requested" or "Todo" from the Docket
+# board, implements/reworks it, and moves it to "In Review". Never merges.
+# Full auto mode: no permission prompts. The box itself is the sandbox.
+set -euo pipefail
+
+# Reachable toolchain even under a minimal (cron) environment.
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+REPO="${RALPH_REPO:-$HOME/code/docket}"
+PROMPT_FILE="$HOME/.claude/ralph-board.md"
+
+cd "$REPO"
+hermes -z "$(cat "$PROMPT_FILE")" --yolo --accept-hooks

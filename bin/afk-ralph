@@ -1,0 +1,32 @@
+#!/bin/bash
+# afk-ralph — run the board-driven Ralph loop for up to N iterations.
+# Each iteration works one AFK ticket ("Changes Requested" first, then "Todo")
+# from the Docket Linear board. Stops early when the board has nothing eligible.
+# The box is the sandbox; no docker.
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+N="${1:-}"
+if [ -z "$N" ]; then
+  echo "Usage: afk-ralph <iterations>" >&2
+  exit 1
+fi
+
+REPO="${RALPH_REPO:-$HOME/code/docket}"
+PROMPT_FILE="$HOME/.claude/ralph-board.md"
+PROMPT="$(cat "$PROMPT_FILE")"
+
+cd "$REPO"
+
+for ((i=1; i<=N; i++)); do
+  echo "===== ralph board iteration $i / $N ($(date -u +%H:%M:%SZ)) ====="
+  result=$(hermes -z "$PROMPT" --yolo --accept-hooks)
+  echo "$result"
+  if [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then
+    echo "===== board clear: no eligible tickets after $i iteration(s). ====="
+    exit 0
+  fi
+done
+
+echo "===== reached $N iteration(s); more tickets may remain. ====="
