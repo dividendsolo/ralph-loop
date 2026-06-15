@@ -12,6 +12,7 @@ bin/
   ralph-once     Work ONE AFK ticket end-to-end, then stop (worker, hermes -z, headless).
   ralph-once-tui Same run in the interactive TUI, so you can watch it work live.
   afk-ralph      Run the worker loop up to N times; stops when the board is clear.
+  afk-ralph-watch  afk-ralph with the live agent log streamed beside it, to watch.
   ralph-init     Readiness check (repo, git identity, hermes, gh, prompt present).
   review-board   One senior-reviewer pass over AFK "In Review" PRs (claude, headless).
 prompts/
@@ -39,13 +40,17 @@ not at `$HOME/code/docket`.
 ```bash
 ralph-once          # advance one ticket (headless: only the final summary prints)
 ralph-once-tui      # same, in the TUI, to watch it work live
-afk-ralph 10        # advance up to 10 tickets
+afk-ralph 10        # advance up to 10 tickets (headless)
+afk-ralph-watch 10  # same, with the live agent log streamed so you can watch
 review-board        # one review pass (also runs from cron)
 ```
 
-`ralph-once` runs `hermes -z` (oneshot), which prints ONLY the final summary —
-the terminal stays blank until it finishes. To watch a headless run live, follow
-the agent log in another terminal: `hermes logs -f`. Or use `ralph-once-tui`.
+`ralph-once` / `afk-ralph` run `hermes -z` (oneshot), which prints ONLY the final
+summary per ticket — the terminal stays blank while each ticket works. To watch
+live: use `ralph-once-tui` (single ticket, TUI) or `afk-ralph-watch` (loop, with
+the agent log streamed), or follow the log yourself in another terminal with
+`hermes logs -f`. Each ticket always runs in its own fresh context; the watch
+variants never collapse the loop into one shared session.
 
 ## Schedule the reviewer
 

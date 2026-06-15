@@ -1,0 +1,27 @@
+#!/bin/bash
+# afk-ralph-watch — the board-driven Ralph loop (up to N tickets), with the live
+# agent log streamed beside it so you can watch each ticket work in the terminal.
+#
+# Why not a TUI loop: each ticket MUST run in its own fresh hermes context (Ralph
+# keeps state in Linear/GitHub/the repo, never in the context window). So this
+# runs the same headless oneshot per ticket as `afk-ralph` and tails the live
+# log alongside, rather than sharing one bloated TUI session across tickets.
+#
+# For a single ticket you can watch instead, use `ralph-once-tui`.
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+N="${1:-}"
+if [ -z "$N" ]; then
+  echo "Usage: afk-ralph-watch <iterations>" >&2
+  exit 1
+fi
+
+# Stream the live agent log (tool calls + reasoning) in the background; stop it
+# when the loop finishes or we are interrupted.
+hermes logs -f --component agent >&2 &
+LOG_PID=$!
+trap 'kill "$LOG_PID" 2>/dev/null || true' EXIT INT TERM
+
+afk-ralph "$N"
