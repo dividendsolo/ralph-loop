@@ -13,7 +13,7 @@
 # so detached/tmux runs stay inspectable after a disconnect.
 set -uo pipefail
 
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 N="${1:-}"
 if [ -z "$N" ]; then
