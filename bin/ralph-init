@@ -26,10 +26,11 @@ command -v hermes >/dev/null 2>&1 && echo "✓ hermes on PATH (the worker)" || {
 command -v gh >/dev/null 2>&1 && echo "✓ gh on PATH" || { echo "✗ gh not on PATH"; ok=0; }
 gh auth status >/dev/null 2>&1 && echo "✓ gh authenticated" || { echo "✗ gh not authenticated"; ok=0; }
 [ -f "$HOME/.hermes/skills/software-development/pickup/SKILL.md" ] && echo "✓ procedure: pickup skill (~/.hermes/skills/.../pickup)" || { echo "✗ pickup skill not installed — run ~/code/skills/install.sh"; ok=0; }
+[ -f "$HOME/.claude/afk.json" ] && echo "✓ AFK registry: ~/.claude/afk.json" || { echo "✗ ~/.claude/afk.json missing — pickup/reviewer skills resolve the board from it (run /afk-setup)"; ok=0; }
 
 echo
 if [ "$ok" = 1 ]; then
-  echo "Ready. Ralph pulls AFK tickets in 'Changes Requested' (first) then 'Todo'."
+  echo "Ready. Ralph pulls work by priority: In Progress (mine), Changes Requested, then Ready for Agent."
   echo "Run:  ralph-once      (one ticket)      or   afk-ralph 10   (loop)"
 else
   echo "Not ready — resolve the ✗ items above."
