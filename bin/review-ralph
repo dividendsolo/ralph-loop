@@ -37,6 +37,10 @@ log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
 
 log "===== review-ralph start: up to $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
 
+# Pull the skills playbook + this repo to current before reviewing, so the agent
+# never runs a stale reviewer-pickup or reviews against a behind main/LEARNINGS.md.
+ralph-sync "$REPO" 2>&1 | tee -a "$RALPH_LOG" || true
+
 failures=0
 for ((i=1; i<=N; i++)); do
   log "===== reviewer iteration $i / $N ($(date -u +%H:%M:%SZ)) ====="

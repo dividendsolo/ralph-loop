@@ -1,0 +1,42 @@
+#!/bin/bash
+# ralph-sync — bring the agent's dependencies up to date before a loop run.
+#
+# Pushing to main from the laptop does NOT reach this box on its own. The loop
+# runs straight out of the local checkouts, so a stale checkout means the agent
+# runs stale code: a stale `skills` playbook (the original dev-ticket bug), or a
+# target repo whose main/LEARNINGS.md is behind. This pulls both right before the
+# loop, so freshness is tied to the moment of use rather than a side-band cron.
+#
+# What it pulls:
+#   - ~/code/skills        : the agent playbooks (symlinked into ~/.claude/skills)
+#   - $1 (the target repo) : the repo the loop is about to work/review
+#
+# Auth: the checkouts use HTTPS remotes, so git reuses the gh credential helper
+# (the same auth the agents already use to push and open PRs) — no SSH key needed.
+#
+# Safety: --ff-only never clobbers local work; a repo with uncommitted edits or a
+# diverged history is left untouched and logged. Best-effort throughout: a failed
+# pull must never block the loop, so every step falls through.
+set -uo pipefail
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+sync_one() {
+  local repo="$1"
+  [ -n "$repo" ] && [ -d "$repo/.git" ] || { echo "ralph-sync: skip (not a git repo): $repo"; return 0; }
+  local before after
+  before=$(git -C "$repo" rev-parse --short HEAD 2>/dev/null)
+  if git -C "$repo" pull --ff-only --quiet 2>/dev/null; then
+    after=$(git -C "$repo" rev-parse --short HEAD 2>/dev/null)
+    if [ "$before" = "$after" ]; then
+      echo "ralph-sync: $(basename "$repo") up to date ($after)"
+    else
+      echo "ralph-sync: $(basename "$repo") $before -> $after"
+    fi
+  else
+    echo "ralph-sync: $(basename "$repo") NOT fast-forwarded (local changes or diverged) — left untouched"
+  fi
+}
+
+sync_one "$HOME/code/skills"
+sync_one "${1:-}"

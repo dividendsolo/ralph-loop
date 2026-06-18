@@ -15,5 +15,8 @@ REPO="${RALPH_REPO:-$HOME/code/docket}"
 # `cd "$REPO"` below selects which board. Nothing about it is hardcoded here.
 PROMPT="Use the pickup skill to pick up and carry EXACTLY ONE ticket forward on this repo's board, then STOP. Follow the skill's procedure in full (resolve the tracker/board and scope from ~/.claude/afk.json, priority order, claim and force-unassign, gitflow branch, LEARNINGS as binding constraints, test-first, stop at the PR). If no ticket is eligible, print <promise>NO_TICKETS</promise> and stop."
 
+# Pull the skills playbook + this repo to current before working.
+ralph-sync "$REPO" || true
+
 cd "$REPO"
 hermes -z "$PROMPT" --yolo --accept-hooks
