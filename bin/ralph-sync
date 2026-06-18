@@ -9,6 +9,9 @@
 #
 # What it pulls:
 #   - ~/code/skills        : the agent playbooks (symlinked into ~/.claude/skills)
+#   - ~/code/ralph-loop    : the loop's own scripts (symlinked into ~/.local/bin).
+#                            The running instance keeps its already-loaded copy;
+#                            the pull lands the update for the NEXT tick.
 #   - $1 (the target repo) : the repo the loop is about to work/review
 #
 # Auth: the checkouts use HTTPS remotes, so git reuses the gh credential helper
@@ -39,4 +42,5 @@ sync_one() {
 }
 
 sync_one "$HOME/code/skills"
+sync_one "$HOME/code/ralph-loop"
 sync_one "${1:-}"
