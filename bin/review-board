@@ -31,4 +31,15 @@ fi
 
 # review-ralph tees its own output to $LOG, so do NOT redirect here (that would
 # double-write every line). Its stdout copy goes to cron's (absent) mailer.
-review-ralph "$ITERS"
+#
+# Multi-repo: review every repo registered in afk.json (a single-repo default left
+# non-docket PRs rotting In Review — see ENG-99). A failed pass on one repo must
+# not stop the others.
+AFK="$HOME/.claude/afk.json"
+for REPO in $(jq -r ".repos | keys[]" "$AFK"); do
+  if [ ! -d "$REPO" ]; then
+    echo "===== review-board: skipping $REPO (not cloned) ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
+    continue
+  fi
+  RALPH_REPO="$REPO" review-ralph "$ITERS" || echo "===== review-board: review-ralph failed for $REPO ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
+done
