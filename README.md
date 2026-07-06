@@ -13,21 +13,24 @@ bin/
   ralph-once-tui Same run in the interactive TUI, so you can watch it work live.
   afk-ralph      Run the worker loop up to N times; stops when the board is clear.
   afk-ralph-watch  afk-ralph with the live agent log streamed beside it, to watch.
-  ralph-init     Readiness check (repo, git identity, hermes, gh, prompt present).
+  ralph-init     Readiness check (repo, git identity, hermes, gh, engineer skill).
   review-board   One senior-reviewer pass over AFK "In Review" PRs (claude, headless).
-prompts/
-  ralph-board.md   The worker's procedure.
-  review-board.md  The reviewer's procedure (SHADOW vs LIVE merge mode in here).
-install.sh       Symlink bin/ onto PATH and prompts/ into ~/.claude.
-crontab.example  Schedule the reviewer pass.
+  work-board     One autonomous worker pass, scoped to rep-sheet (claude, headless).
+install.sh       Symlink bin/ onto PATH.
+crontab.example  Schedule the reviewer and worker passes.
 ```
+
+The agent procedure is NOT in this repo: each loop invokes the `engineer` /
+`reviewer` skill (in `~/code/skills`) with a short inline prompt, and both resolve
+the repo, board, and scope from `~/.claude/afk.json`. Nothing here is hardcoded to
+a single project.
 
 ## Install on a machine
 
 ```bash
 git clone git@github.com:dividendsolo/ralph-loop.git
 cd ralph-loop
-./install.sh        # symlinks bin -> ~/.local/bin, prompts -> ~/.claude
+./install.sh        # symlinks bin -> ~/.local/bin
 ralph-init          # verify the toolchain
 ```
 
@@ -55,11 +58,14 @@ variants never collapse the loop into one shared session.
 ## Schedule the reviewer
 
 See `crontab.example`. The reviewer runs in **SHADOW** mode by default (reviews
-and posts verdicts, never merges). Flip `MERGE_MODE: LIVE` in
-`prompts/review-board.md` to let it merge CI-green, accepted PRs.
+and posts verdicts, never merges). The SHADOW-vs-LIVE merge mode lives in the
+`reviewer` skill (in `~/code/skills`), not in this repo; flip it to `LIVE` there
+to let the reviewer merge CI-green, accepted PRs.
 
 ## Notes
 
 - The worker never merges and never pushes to `main` outside a PR; the reviewer
   is the only thing that merges (and only in LIVE mode).
-- Prompts hardcode the Docket repo/board/org. To retarget, edit `prompts/*.md`.
+- Nothing here is hardcoded to one project: the loops resolve the repo, board, and
+  scope from `~/.claude/afk.json`, and the procedure lives in the `engineer` /
+  `reviewer` skills. To retarget, edit `afk.json`.
