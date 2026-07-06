@@ -1,6 +1,6 @@
 #!/bin/bash
 # review-ralph — board-driven REVIEWER Ralph loop, up to N iterations.
-# Each iteration invokes the `reviewer-pickup` skill via Claude Code, which reviews
+# Each iteration invokes the `reviewer` skill via Claude Code, which reviews
 # EXACTLY ONE "In Review" PR and then STOPS (the skill no longer loops itself — the
 # loop lives here). The loop drains the review queue one PR per iteration and exits
 # early when the skill reports the queue is clear (`<promise>NO_PRS</promise>`).
@@ -11,7 +11,7 @@
 # by OUTPUT (the NO_PRS token), and treat EMPTY output as a startup crash worth one
 # retry — a single bad iteration must not abort the whole run.
 #
-# The board/tracker is NOT hardcoded here: `reviewer-pickup` resolves it from
+# The board/tracker is NOT hardcoded here: `reviewer` resolves it from
 # ~/.claude/afk.json. If that registry is missing the skill says so and stops, and
 # this loop logs each iteration's output so the reason stays inspectable.
 set -uo pipefail
@@ -24,11 +24,11 @@ N="${1:-${REVIEW_ITERS:-5}}"
 REPO="${RALPH_REPO:-$HOME/code/docket}"
 RALPH_LOG="${REVIEW_LOG:-$HOME/review-board.log}"
 
-# The full reviewer procedure lives in the `reviewer-pickup` skill (in ~/code/skills,
+# The full reviewer procedure lives in the `reviewer` skill (in ~/code/skills,
 # symlinked into ~/.claude/skills). This prompt just invokes it for one PR; the skill
 # owns scope (In Review), idempotency by head SHA, the independent sub-reviewer,
 # decide/act, LEARNINGS curation, and the Discord notify.
-PROMPT="Use the reviewer-pickup skill to review EXACTLY ONE In Review PR on this repo's board, then STOP. Follow the skill's procedure in full (resolve the board/tracker from ~/.claude/afk.json, idempotency by head SHA, independent sub-reviewer, decide and act, curate LEARNINGS, notify). If no PR is eligible, print <promise>NO_PRS</promise> and stop."
+PROMPT="Use the reviewer skill to review EXACTLY ONE In Review PR on this repo's board, then STOP. Follow the skill's procedure in full (resolve the board/tracker from ~/.claude/afk.json, idempotency by head SHA, independent sub-reviewer, decide and act, curate LEARNINGS, notify). If no PR is eligible, print <promise>NO_PRS</promise> and stop."
 
 cd "$REPO" || { echo "review-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
@@ -38,7 +38,7 @@ log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
 log "===== review-ralph start: up to $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
 
 # Pull the skills playbook + this repo to current before reviewing, so the agent
-# never runs a stale reviewer-pickup or reviews against a behind main/LEARNINGS.md.
+# never runs a stale reviewer or reviews against a behind main/LEARNINGS.md.
 ralph-sync "$REPO" 2>&1 | tee -a "$RALPH_LOG" || true
 
 failures=0

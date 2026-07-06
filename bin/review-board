@@ -1,13 +1,13 @@
 #!/bin/bash
 # review-board — cron entrypoint for the REVIEWER Ralph loop (senior-reviewer role).
 # Cron fires this on a schedule; it just kicks off `review-ralph`, which invokes the
-# `reviewer-pickup` skill once per iteration (one "In Review" PR each) until the
+# `reviewer` skill once per iteration (one "In Review" PR each) until the
 # review queue is clear or the iteration budget is reached.
 #
 # Single-instance lock: a loop pass can outlast the cron interval, so overlapping
 # ticks would race (double review / double merge on one PR). flock makes a new
 # invocation SKIP if a pass is already running, guarding both cron ticks and manual
-# runs. Polling frequently is cheap because reviewer-pickup is idempotent per head
+# runs. Polling frequently is cheap because reviewer is idempotent per head
 # SHA (it skips already-reviewed unchanged PRs) and exits early when nothing is In
 # Review (`<promise>NO_PRS</promise>`).
 set -euo pipefail

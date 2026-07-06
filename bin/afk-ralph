@@ -24,12 +24,12 @@ fi
 REPO="${RALPH_REPO:-$HOME/code/docket}"
 RALPH_LOG="${RALPH_LOG:-$HOME/ralph.log}"
 
-# The full worker procedure lives in the `pickup` skill (in ~/code/skills,
+# The full worker procedure lives in the `engineer` skill (in ~/code/skills,
 # installed into ~/.hermes/skills). This prompt just invokes it; the skill resolves
-# the board/tracker and scope from ~/.claude/afk.json and owns pickup priority,
+# the board/tracker and scope from ~/.claude/afk.json and owns ticket-priority order,
 # claim+unassign, gitflow branch, LEARNINGS, TDD, stop-at-PR. Nothing about the
 # board is hardcoded here — the `cd "$REPO"` below is what selects it.
-PROMPT="Use the pickup skill to pick up and carry EXACTLY ONE ticket forward on this repo's board, then STOP. Follow the skill's procedure in full (resolve the tracker/board and scope from ~/.claude/afk.json, priority order, claim and force-unassign, gitflow branch, LEARNINGS as binding constraints, test-first, stop at the PR). If no ticket is eligible, print <promise>NO_TICKETS</promise> and stop."
+PROMPT="Use the engineer skill to pick up and carry EXACTLY ONE ticket forward on this repo's board, then STOP. Follow the skill's procedure in full (resolve the tracker/board and scope from ~/.claude/afk.json, priority order, claim and force-unassign, gitflow branch, LEARNINGS as binding constraints, test-first, stop at the PR). If no ticket is eligible, print <promise>NO_TICKETS</promise> and stop."
 cd "$REPO" || { echo "afk-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
 # Mirror banners + hermes output to the persistent log as well as the terminal.
@@ -38,7 +38,7 @@ log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
 log "===== afk-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
 
 # Pull the skills playbook + this repo to current before working, so the agent
-# never runs a stale pickup or branches off a behind main.
+# never runs a stale engineer skill or branches off a behind main.
 ralph-sync "$REPO" 2>&1 | tee -a "$RALPH_LOG" || true
 
 failures=0

@@ -16,7 +16,7 @@ cat <<EOF
 
 Ralph TUI. Paste this as your first message, then watch it work:
 
-  Use the pickup skill to pick up and carry exactly ONE ticket forward on this repo's board, then stop.
+  Use the engineer skill to pick up and carry exactly ONE ticket forward on this repo's board, then stop.
 
 (Tip: to watch the headless 'ralph-once' instead, run 'hermes logs -f' in another terminal.)
 
