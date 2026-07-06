@@ -2,3 +2,9 @@
 # Install with:  crontab -e   (paste the line below)
 # Appends to ~/review-board.log. SHADOW mode by default (no auto-merge).
 13,43 * * * * /home/div/.local/bin/review-board
+
+# Ralph worker — autonomous pickup, SCOPED TO REP-SHEET ONLY (work-board's jq filter).
+# Runs at :00 and :30 so a freshly-opened PR meets the reviewer pass ~13 min later.
+# Appends to ~/work-board.log. Once enabled, every Ready-for-Agent card on rep-sheet is
+# a live trigger — start here, slow the schedule (or unfilter to add repos) as needed.
+0,30 * * * * /home/div/.local/bin/work-board

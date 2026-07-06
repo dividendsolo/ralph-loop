@@ -1,0 +1,47 @@
+#!/bin/bash
+# work-board — cron entrypoint for the WORKER Ralph loop (engineer role).
+# The mirror of review-board: cron fires this on a schedule; it kicks off `afk-ralph`,
+# which invokes the `engineer` skill once per iteration (one eligible ticket each)
+# until the board is clear or the iteration budget is reached.
+#
+# SCOPED TO REP-SHEET ONLY (James, 2026-07-06). Autonomous pickup is deliberately
+# enabled for exactly one board while we watch it burn safely; every Ready-for-Agent
+# card on rep-sheet becomes a live trigger, nothing else does. To widen later, relax
+# the jq filter below (or drop it entirely to iterate every repo, like review-board).
+#
+# Single-instance lock: a loop pass can outlast the cron interval, so overlapping
+# ticks would race (two workers on one board). flock makes a new invocation SKIP if a
+# pass is already running. Polling is cheap because afk-ralph exits early when the
+# board has nothing eligible (`<promise>NO_TICKETS</promise>`).
+set -euo pipefail
+
+# Cron runs with a minimal environment; make the toolchain reachable.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+LOG="$HOME/work-board.log"
+LOCKFILE="$HOME/.work-board.lock"
+# Max tickets to drain per cron tick; afk-ralph exits earlier on NO_TICKETS. Override
+# with WORK_ITERS in the environment.
+ITERS="${WORK_ITERS:-5}"
+
+# Acquire the single-instance lock (non-blocking). If held, a pass is already in
+# flight — skip quietly rather than pile on and race it.
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+  echo "===== work-board skipped: a pass is already running ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+  exit 0
+fi
+
+# Scope: rep-sheet only. Select the afk.json repo whose path ends in /rep-sheet, so
+# this stays machine-agnostic (laptop /Users/... vs VPS /home/div/code/...). jq's
+# select returns cleanly empty (exit 0) if rep-sheet is not registered, unlike grep.
+# afk-ralph logs to $LOG (RALPH_LOG) instead of its default ~/ralph.log, matching how
+# review-board keeps a dedicated board log.
+AFK="$HOME/.claude/afk.json"
+for REPO in $(jq -r '.repos | keys[] | select(test("/rep-sheet$"))' "$AFK"); do
+  if [ ! -d "$REPO" ]; then
+    echo "===== work-board: skipping $REPO (not cloned) ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
+    continue
+  fi
+  RALPH_REPO="$REPO" RALPH_LOG="$LOG" afk-ralph "$ITERS" || echo "===== work-board: afk-ralph failed for $REPO ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
+done
