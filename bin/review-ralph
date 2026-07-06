@@ -1,9 +1,10 @@
 #!/bin/bash
 # review-ralph — board-driven REVIEWER Ralph loop, up to N iterations.
-# Each iteration invokes the `reviewer` skill via Claude Code, which reviews
-# EXACTLY ONE "In Review" PR and then STOPS (the skill no longer loops itself — the
-# loop lives here). The loop drains the review queue one PR per iteration and exits
-# early when the skill reports the queue is clear (`<promise>NO_PRS</promise>`).
+# Each iteration dispatches the `reviewer` AGENT (`claude --agent reviewer`), the
+# review specialist that drives the `reviewer` skill: it reviews EXACTLY ONE
+# "In Review" PR and then STOPS (the skill no longer loops itself — the loop lives
+# here). The loop drains the review queue one PR per iteration and exits early when
+# the agent reports the queue is clear (`<promise>NO_PRS</promise>`).
 # The box is the sandbox; no docker.
 #
 # Runner: `claude -p` (Claude Code headless), chosen over the worker loop's
@@ -49,7 +50,7 @@ for ((i=1; i<=N; i++)); do
   rc=0
   for attempt in 1 2; do
     # Capture stdout+stderr together so any failure is preserved and logged.
-    result=$(claude --dangerously-skip-permissions -p "$PROMPT" 2>&1)
+    result=$(claude --agent reviewer --dangerously-skip-permissions -p "$PROMPT" 2>&1)
     rc=$?
     # A successful run always prints something (a per-PR summary, or the NO_PRS
     # token). EMPTY output is the only signal of a genuine startup crash — retry it.

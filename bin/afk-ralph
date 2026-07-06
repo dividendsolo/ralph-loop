@@ -24,6 +24,12 @@ fi
 REPO="${RALPH_REPO:-$HOME/code/docket}"
 RALPH_LOG="${RALPH_LOG:-$HOME/ralph.log}"
 
+# The engineer role is the `engineer` AGENT driving the `engineer` skill. This loop
+# still runs it on Hermes (`hermes -z`), which has no custom-agent dispatch, so the
+# prompt invokes the skill directly and Hermes IS the engineer. When the worker loop
+# moves onto Claude Code (ENG-100), this dispatch becomes `claude --agent engineer`,
+# mirroring how review-ralph already dispatches `claude --agent reviewer`.
+#
 # The full worker procedure lives in the `engineer` skill (in ~/code/skills,
 # installed into ~/.hermes/skills). This prompt just invokes it; the skill resolves
 # the board/tracker and scope from ~/.claude/afk.json and owns ticket-priority order,
