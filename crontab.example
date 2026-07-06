@@ -1,10 +1,10 @@
-# Ralph reviewer — one senior-review pass at :13 and :43 past every hour.
+# Ralph reviewer: one senior-review pass at :13 and :43 past every hour.
 # Install with:  crontab -e   (paste the line below)
 # Appends to ~/review-board.log. SHADOW mode by default (no auto-merge).
 13,43 * * * * /home/div/.local/bin/review-board
 
-# Ralph worker — autonomous pickup, SCOPED TO REP-SHEET ONLY (work-board's jq filter).
-# Runs at :00 and :30 so a freshly-opened PR meets the reviewer pass ~13 min later.
-# Appends to ~/work-board.log. Once enabled, every Ready-for-Agent card on rep-sheet is
-# a live trigger — start here, slow the schedule (or unfilter to add repos) as needed.
+# Ralph worker: autonomous pickup, SCOPED TO REP-SHEET + SKILLS (work-board's jq filter).
+# Runs at :00 and :30. Appends to ~/work-board.log. Every Ready-for-Agent or
+# Changes-Requested card on rep-sheet or skills is a live trigger; widen the jq filter
+# or slow the schedule as needed.
 0,30 * * * * /home/div/.local/bin/work-board
