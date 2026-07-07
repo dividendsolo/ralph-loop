@@ -34,16 +34,21 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# Scope: rep-sheet + skills. Select the afk.json repos whose path ends in /rep-sheet
-# or /skills, so this stays machine-agnostic (laptop /Users/... vs VPS /home/div/code/...).
-# jq's select returns cleanly empty (exit 0) if neither is registered, unlike grep.
-# afk-ralph logs to $LOG (RALPH_LOG) instead of its default ~/ralph.log, matching how
-# review-board keeps a dedicated board log.
+# Scope: skills + rep-sheet. Worker scope is unchanged; iteration order is
+# pinned by operator preference (skills first). Paths are resolved from afk.json
+# via basename match, so this stays machine-agnostic (laptop /Users/... vs VPS
+# /home/div/code/...). jq's select returns cleanly empty (exit 0) if a name is
+# not registered, unlike grep.
+# afk-ralph logs to $LOG (RALPH_LOG) instead of its default ~/ralph.log, matching
+# how review-board keeps a dedicated board log.
 AFK="$HOME/.claude/afk.json"
-for REPO in $(jq -r '.repos | keys[] | select(test("/(rep-sheet|skills)$"))' "$AFK"); do
-  if [ ! -d "$REPO" ]; then
-    echo "===== work-board: skipping $REPO (not cloned) ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
-    continue
-  fi
-  RALPH_REPO="$REPO" RALPH_LOG="$LOG" afk-ralph "$ITERS" || echo "===== work-board: afk-ralph failed for $REPO ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
+for NAME in skills rep-sheet; do
+  while IFS= read -r REPO; do
+    [ -n "$REPO" ] || continue
+    if [ ! -d "$REPO" ]; then
+      echo "===== work-board: skipping $REPO (not cloned) ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+      continue
+    fi
+    RALPH_REPO="$REPO" RALPH_LOG="$LOG" afk-ralph "$ITERS" || echo "===== work-board: afk-ralph failed for $REPO ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+  done < <(jq -r --arg n "$NAME" '.repos | keys[] | select(test("/" + $n + "$"))' "$AFK")
 done
