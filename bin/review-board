@@ -32,9 +32,12 @@ fi
 # review-ralph tees its own output to $LOG, so do NOT redirect here (that would
 # double-write every line). Its stdout copy goes to cron's (absent) mailer.
 #
-# Multi-repo: review every repo registered in afk.json (a single-repo default left
-# non-docket PRs rotting In Review — see ENG-99). A failed pass on one repo must
-# not stop the others.
+# Multi-repo: iterate the repos explicitly named below in priority order
+# (operator-pinned: skills > rep-sheet > docket). Iteration order is a
+# project-management decision (per ENG-126), NOT a derived-from-afk.json order;
+# the explicit list is the source of truth. Paths are still resolved from
+# afk.json via basename match (machine-agnostic), and a failed pass on one
+# repo must not stop the others.
 #
 # Iteration order is pinned by operator preference: skills > rep-sheet > docket.
 # Paths are resolved from afk.json via basename match, so this stays
@@ -42,11 +45,12 @@ fi
 # from afk.json is silently skipped, same as before.
 AFK="$HOME/.claude/afk.json"
 for NAME in skills rep-sheet docket; do
-  REPO=$(jq -r --arg n "$NAME" '.repos | keys[] | select(test("/" + $n + "$"))' "$AFK")
-  if [ -z "$REPO" ]; then continue; fi
-  if [ ! -d "$REPO" ]; then
-    echo "===== review-board: skipping $REPO (not cloned) ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
-    continue
-  fi
-  RALPH_REPO="$REPO" review-ralph "$ITERS" || echo "===== review-board: review-ralph failed for $REPO ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
+  while IFS= read -r REPO; do
+    [ -n "$REPO" ] || continue
+    if [ ! -d "$REPO" ]; then
+      echo "===== review-board: skipping $REPO (not cloned) ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+      continue
+    fi
+    RALPH_REPO="$REPO" review-ralph "$ITERS" || echo "===== review-board: review-ralph failed for $REPO ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+  done < <(jq -r --arg n "$NAME" '.repos | keys[] | select(test("/" + $n + "$"))' "$AFK")
 done
