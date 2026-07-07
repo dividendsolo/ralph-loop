@@ -23,23 +23,33 @@ fi
 
 REPO="${RALPH_REPO:-$HOME/code/docket}"
 RALPH_LOG="${RALPH_LOG:-$HOME/ralph.log}"
+RALPH_LOOP_NAME="work"
 
-# The engineer role is the `engineer` AGENT driving the `engineer` skill. This loop
-# still runs it on Hermes (`hermes -z`), which has no custom-agent dispatch, so the
-# prompt invokes the skill directly and Hermes IS the engineer. When the worker loop
-# moves onto Claude Code (ENG-100), this dispatch becomes `claude --agent engineer`,
-# mirroring how review-ralph already dispatches `claude --agent reviewer`.
-#
-# The full worker procedure lives in the `engineer` skill (in ~/code/skills,
-# installed into ~/.hermes/skills). This prompt just invokes it; the skill resolves
-# the board/tracker and scope from ~/.claude/afk.json and owns ticket-priority order,
-# claim+unassign, gitflow branch, LEARNINGS, TDD, stop-at-PR. Nothing about the
-# board is hardcoded here — the `cd "$REPO"` below is what selects it.
+# The engineer role is the `engineer` AGENT driving the `engineer` skill. The
+# dispatcher (`ralph-dispatch`, sourced below) runs the per-role model chain
+# Opus 4.8 -> Sonnet 5 -> Hermes/MiniMax-M3. The engineer agent is a solo
+# developer: it picks up a pre-planned card, writes code, opens a PR, and
+# hands off. No sub-agent for implementation (the engineer IS the
+# implementer). A sub-agent may be dispatched for verification when it
+# makes sense; see the engineer skill for the conditions.
 PROMPT="Use the engineer skill to pick up and carry EXACTLY ONE ticket forward on this repo's board, then STOP. Follow the skill's procedure in full (resolve the tracker/board and scope from ~/.claude/afk.json, priority order, claim and force-unassign, gitflow branch, LEARNINGS as binding constraints, test-first, stop at the PR). If no ticket is eligible, print <promise>NO_TICKETS</promise> and stop."
+
+# Source the shared dispatch helper. The helper runs the per-role model
+# chain and falls through to the next tier on rate-limit. State persists in
+# ~/.<loop>-rate-limited so subsequent iterations in this tick skip
+# already-attempted tiers. Cleared at the start of every new tick.
+# shellcheck source=ralph-dispatch
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
+
 cd "$REPO" || { echo "afk-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
-# Mirror banners + hermes output to the persistent log as well as the terminal.
+# Mirror banners + agent output to the persistent log as well as the terminal.
 log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
+
+# Self-heal the rate-limit state file at the start of every new tick, so
+# the moment any tier becomes available again, the next iteration retries
+# the highest-priority tier (Opus 4.8) instead of staying on a lower one.
+rm -f "$HOME/.${RALPH_LOOP_NAME}-rate-limited"
 
 log "===== afk-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
 
@@ -55,8 +65,12 @@ for ((i=1; i<=N; i++)); do
   rc=0
   for attempt in 1 2; do
     # Capture stdout+stderr together so any failure is preserved and logged.
-    result=$(hermes -z "$PROMPT" --yolo --accept-hooks 2>&1)
+    # ralph-dispatch selects Hermes as the engineer primary today; once ENG-100
+    # lands, switch the case in ralph-dispatch to `claude --agent engineer` and
+    # the rate-limit fallback kicks in automatically.
+    dispatch_role engineer "$PROMPT"
     rc=$?
+    result="$RALPH_DISPATCH_OUTPUT"
     # Success is judged by OUTPUT, not exit code. hermes -z exits non-zero even
     # on a fully successful ticket (git/PR/hook activity during teardown), so the
     # exit code is an unreliable success signal. A genuine startup crash produces
@@ -64,7 +78,7 @@ for ((i=1; i<=N; i++)); do
     if [ -n "${result//[[:space:]]/}" ]; then
       break
     fi
-    log "----- iteration $i attempt $attempt produced NO output (hermes exit $rc) — likely a startup crash -----"
+    log "----- iteration $i attempt $attempt produced NO output (dispatch exit $rc) — likely a startup crash -----"
     if [ "$attempt" = 1 ]; then
       log "retrying in 15s..."
       sleep 15
@@ -72,14 +86,14 @@ for ((i=1; i<=N; i++)); do
   done
 
   if [ -z "${result//[[:space:]]/}" ]; then
-    log "===== iteration $i: hermes produced no output after 2 attempts (last exit $rc); skipping. ====="
+    log "===== iteration $i: dispatch produced no output after 2 attempts (last exit $rc); skipping. ====="
     failures=$((failures + 1))
     continue
   fi
 
   log "$result"
   if [ "$rc" -ne 0 ]; then
-    log "(note: hermes exit $rc on a ticket that produced output — expected; success judged by output, not exit code.)"
+    log "(note: dispatch exit $rc on a ticket that produced output — expected; success judged by output, not exit code.)"
   fi
 
   if [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then

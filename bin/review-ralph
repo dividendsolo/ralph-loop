@@ -24,6 +24,7 @@ N="${1:-${REVIEW_ITERS:-5}}"
 
 REPO="${RALPH_REPO:-$HOME/code/docket}"
 RALPH_LOG="${REVIEW_LOG:-$HOME/review-board.log}"
+RALPH_LOOP_NAME="review"
 
 # The full reviewer procedure lives in the `reviewer` skill (in ~/code/skills,
 # symlinked into ~/.claude/skills). This prompt just invokes it for one PR; the skill
@@ -31,10 +32,22 @@ RALPH_LOG="${REVIEW_LOG:-$HOME/review-board.log}"
 # decide/act, LEARNINGS curation, and the Discord notify.
 PROMPT="Use the reviewer skill to review EXACTLY ONE In Review PR on this repo's board, then STOP. Follow the skill's procedure in full (resolve the board/tracker from ~/.claude/afk.json, idempotency by head SHA, independent sub-reviewer, decide and act, curate LEARNINGS, notify). If no PR is eligible, print <promise>NO_PRS</promise> and stop."
 
+# `ralph-dispatch` lives in the same bin/ directory. Cron's PATH already covers
+# ~/.local/bin (which symlinks here), but `source` by absolute path so a manual
+# run from anywhere picks up the helper too.
+# shellcheck source=ralph-dispatch
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
+
 cd "$REPO" || { echo "review-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
 # Mirror banners + agent output to the persistent log as well as the terminal.
 log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
+
+# Self-heal the rate-limit state file at the start of every new tick, so the
+# moment the Anthropic weekly limit lifts, the next primary attempt uses Claude
+# Code again (not the Hermes fallback). ralph-dispatch writes the state file
+# when it detects a rate-limit refusal; this is the only place that clears it.
+rm -f "$HOME/.${RALPH_LOOP_NAME}-rate-limited"
 
 log "===== review-ralph start: up to $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
 
@@ -50,14 +63,17 @@ for ((i=1; i<=N; i++)); do
   rc=0
   for attempt in 1 2; do
     # Capture stdout+stderr together so any failure is preserved and logged.
-    result=$(claude --agent reviewer --dangerously-skip-permissions -p "$PROMPT" 2>&1)
+    # ralph-dispatch runs the per-role runner (Claude Code primary, Hermes
+    # fallback on rate-limit) and writes its own FALLBACK banners to the log.
+    dispatch_role reviewer "$PROMPT"
     rc=$?
+    result="$RALPH_DISPATCH_OUTPUT"
     # A successful run always prints something (a per-PR summary, or the NO_PRS
     # token). EMPTY output is the only signal of a genuine startup crash — retry it.
     if [ -n "${result//[[:space:]]/}" ]; then
       break
     fi
-    log "----- iteration $i attempt $attempt produced NO output (claude exit $rc) — likely a startup crash -----"
+    log "----- iteration $i attempt $attempt produced NO output (dispatch exit $rc) — likely a startup crash -----"
     if [ "$attempt" = 1 ]; then
       log "retrying in 15s..."
       sleep 15
@@ -65,7 +81,7 @@ for ((i=1; i<=N; i++)); do
   done
 
   if [ -z "${result//[[:space:]]/}" ]; then
-    log "===== iteration $i: claude produced no output after 2 attempts (last exit $rc); skipping. ====="
+    log "===== iteration $i: dispatch produced no output after 2 attempts (last exit $rc); skipping. ====="
     failures=$((failures + 1))
     continue
   fi

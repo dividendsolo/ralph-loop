@@ -1,0 +1,232 @@
+#!/bin/bash
+# ralph-dispatch — shared dispatch helper for the Ralph loop.
+#
+# review-ralph and afk-ralph both invoke a single ticket/PR per iteration via a
+# model. The model chain (decided 2026-07-07 with James, the operator):
+#
+#   tier 1: Claude Code with Opus 4.8   (--model opus)
+#   tier 2: Claude Code with Sonnet 5   (--model sonnet)
+#   tier 3: Hermes with MiniMax-M3      (-m MiniMax-M3 --provider minimax)
+#
+# We use the Claude Code model aliases (`opus`, `sonnet`) rather than full
+# versioned names (e.g. `claude-opus-4-8`). The aliases are what Claude Code
+# documents in --help and they self-update on Anthropic-side renames, so the
+# helper doesn't break when a new Opus or Sonnet ships.
+#
+# Fable 5 is explicitly out of scope (too expensive for this workload).
+# Sonnet 5 is in the chain as a belt-and-suspenders tier — in practice, the
+# Anthropic weekly limit hits every Claude model at once, so tier 2 almost
+# never fires. But we still go through the motions so a single-model limit
+# doesn't deadlock the loop.
+#
+# How the chain handles a failure:
+#
+#   * One tier per iteration. If tier 1 fails, the iteration aborts. The loop
+#     script retries on the next iteration of the same tick, which reads the
+#     state file and starts at tier 2. If tier 2 also fails, the next
+#     iteration starts at tier 3. The state file is cleared at the start of
+#     every new cron tick, so the moment the rate limit lifts, the next
+#     iteration retries tier 1 (Opus 4.8). Recovery in <= 5 minutes.
+#   * State file path: ~/.<loop>-rate-limited (e.g. ~/.review-rate-limited,
+#     ~/.work-rate-limited). The loop script clears it at the start of every
+#     new tick; the helper writes to it.
+#   * Failure detection: exit code != 0 from the runner, OR stdout contains
+#     the literal `weekly limit` substring. Defense-in-depth: the exit code
+#     is the durable signal, the string check is insurance against a future
+#     CLI release that wraps the error and exits 0.
+#   * Discord notification on every tier drop. One short line, best-effort
+#     (never blocks the verdict on a missing/wrong Discord config).
+#   * Non-rate-limit errors are NOT routed through the fallback. A 500 from
+#     Anthropic, an auth failure, a missing repo — these are real bugs and
+#     should stay loud in the log, not silently rerouted through Hermes.
+#
+# Usage (sourced — the normal path for review-ralph and afk-ralph):
+#
+#   . ralph-dispatch
+#   dispatch_role <role> "$PROMPT"   # output in $RALPH_DISPATCH_OUTPUT,
+#                                    # exit code via $? — non-zero means
+#                                    # the chosen tier failed; the loop
+#                                    # will retry on the next iteration
+#                                    # at the next tier down.
+#
+# Usage (CLI — the smoke-test path):
+#
+#   ralph-dispatch <role> "$PROMPT"
+#
+# Environment knobs:
+#   RALPH_FORCE_TIER=N      — start at tier N (1, 2, or 3) regardless of
+#                              state file. Used by smoke tests.
+#   RALPH_LOG               — path to the per-loop log.
+#   RALPH_LOOP_NAME         — short loop name ("review" or "work"); used
+#                              in the state-file path and in tier-drop
+#                              notifications. Defaults to "review".
+
+set -uo pipefail
+
+# Build a short, human-readable tier label.
+_tier_label() {
+  case "$1" in
+    1) printf 'Opus 4.8' ;;
+    2) printf 'Sonnet 5' ;;
+    3) printf 'Hermes/MiniMax-M3' ;;
+    *) printf 'tier-%s' "$1" ;;
+  esac
+}
+
+# Send a tier-drop notification to Discord. Best-effort: never block, never
+# fail loudly, never change the dispatcher's exit code. If hermes is not on
+# PATH or Discord is not configured, the call is a no-op.
+_notify_tier_drop() {
+  local from_tier="$1" to_tier="$2" reason="$3"
+  local from_label to_label msg
+  from_label=$(_tier_label "$from_tier")
+  to_label=$(_tier_label "$to_tier")
+  msg="🔁 Tier drop on ${RALPH_LOOP_NAME:-review}-board: ${from_label} unavailable (${reason}), falling back to ${to_label}."
+  if command -v hermes >/dev/null 2>&1; then
+    hermes send -t discord -m "$msg" >/dev/null 2>&1 || true
+  fi
+  # Also log the notification locally so the trail is greppable even if
+  # Discord delivery is silently down.
+  printf '%s\n' "===== NOTIFY: $msg =====" | tee -a "${RALPH_LOG:-/dev/null}" >&2
+}
+
+# Run one tier (one model). Echoes the captured output via the global
+# RALPH_DISPATCH_OUTPUT, sets the global RALPH_DISPATCH_TIER to the tier
+# number that ran, and returns the runner's exit code.
+_run_tier() {
+  local tier="$1" role="$2" prompt="$3"
+  case "$tier:$role" in
+    1:reviewer|1:engineer)
+      RALPH_DISPATCH_OUTPUT=$(claude --agent "$role" --model opus --dangerously-skip-permissions -p "$prompt" 2>&1)
+      return $? ;;
+    2:reviewer|2:engineer)
+      RALPH_DISPATCH_OUTPUT=$(claude --agent "$role" --model sonnet --dangerously-skip-permissions -p "$prompt" 2>&1)
+      return $? ;;
+    3:reviewer|3:engineer)
+      RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1)
+      return $? ;;
+    *)
+      printf '%s\n' "ralph-dispatch: unknown tier/role combo: tier=$tier role=$role" | tee -a "${RALPH_LOG:-/dev/null}" >&2
+      return 2 ;;
+  esac
+}
+
+# Determine which tier to start at this call. Reads the state file for
+# "what's the highest tier that has already been attempted this tick" and
+# returns the next tier down. Honors RALPH_FORCE_TIER for smoke tests.
+_starting_tier() {
+  if [ -n "${RALPH_FORCE_TIER:-}" ]; then
+    printf '%s' "$RALPH_FORCE_TIER"
+    return
+  fi
+  local state_file="$HOME/.${RALPH_LOOP_NAME:-review}-rate-limited"
+  if [ -f "$state_file" ]; then
+    # State file holds the lowest tier already attempted. Start one below.
+    local last
+    last=$(cat "$state_file" 2>/dev/null || printf '0')
+    # Cap at 1 (above tier 1 is invalid; loop script will have cleared).
+    if [ "$last" -ge 3 ] 2>/dev/null; then
+      printf '3'
+    else
+      printf '%d' "$((last + 1))"
+    fi
+  else
+    printf '1'
+  fi
+}
+
+# Mark a tier as attempted in the state file. Idempotent overwrites are fine.
+_mark_tier_attempted() {
+  local tier="$1"
+  local state_file="$HOME/.${RALPH_LOOP_NAME:-review}-rate-limited"
+  printf '%s' "$tier" > "$state_file"
+}
+
+# Detect whether the runner's output indicates a rate-limit refusal. Returns
+# 0 (true) if rate-limited, 1 if not. The primary durable signal is:
+#   1. stdout contains the literal `weekly limit` substring
+# (we do NOT use a bare exit-code check, because `hermes -z` exits non-zero
+# on every successful run — a SIGABRT-134 during teardown — and that would
+# false-positive the Hermes/MiniMax-M3 tier on every successful dispatch).
+# A secondary signal: for Claude Code tiers only, a non-zero exit with
+# empty stdout (genuine startup crash; rare but distinct from rate-limit
+# which always has a message).
+_is_rate_limited() {
+  local rc="$1" output="$2" tier="$3"
+  if [[ "$output" == *"weekly limit"* ]]; then
+    return 0
+  fi
+  if [ "$tier" != "3" ] && [ "$rc" -ne 0 ] && [ -z "${output//[[:space:]]/}" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Public: dispatch_role <reviewer|engineer> "$PROMPT"
+# Runs ONE tier per call. On success, returns 0 with $RALPH_DISPATCH_OUTPUT
+# set to the captured stdout. On rate-limit, writes the state file, sends a
+# Discord notification, and returns non-zero (the loop script will retry on
+# the next iteration at the next tier down). On non-rate-limit error,
+# returns the runner's exit code without falling back.
+dispatch_role() {
+  local role="$1"
+  local prompt="$2"
+  local tier rc
+
+  tier=$(_starting_tier)
+
+  # Cap tier at 3 (we only have 3 tiers).
+  if [ "$tier" -gt 3 ] 2>/dev/null; then
+    tier=3
+  fi
+
+  # Run the tier. _run_tier sets RALPH_DISPATCH_OUTPUT and returns the
+  # runner's exit code.
+  _run_tier "$tier" "$role" "$prompt"
+  rc=$?
+
+  RALPH_DISPATCH_TIER="$tier"
+
+  # Detect rate-limit. If we got rate-limited, mark the tier attempted, send
+  # a Discord notification, and return non-zero so the loop script retries
+  # at the next tier down on the next iteration.
+  if _is_rate_limited "$rc" "$RALPH_DISPATCH_OUTPUT" "$tier"; then
+    _mark_tier_attempted "$tier"
+    local reason
+    if [[ "$RALPH_DISPATCH_OUTPUT" == *"weekly limit"* ]]; then
+      reason="weekly limit message in output"
+    else
+      reason="exit $rc with no output"
+    fi
+    if [ "$tier" -lt 3 ]; then
+      _notify_tier_drop "$tier" "$((tier + 1))" "$reason"
+      printf '%s\n' "===== TIER DROP: $(_tier_label "$tier") refused ($reason); next iteration will try $(_tier_label "$((tier + 1))") =====" | tee -a "${RALPH_LOG:-/dev/null}"
+    else
+      # Already on the last tier. No further fallback. Just log and return
+      # non-zero; the loop script will keep retrying this same tier (or
+      # back off, depending on its own retry logic) until the next tick.
+      _notify_tier_drop "$tier" "$tier" "last tier; no further fallback. $reason"
+      printf '%s\n' "===== TIER EXHAUSTED: $(_tier_label "$tier") also refused ($reason); no further fallback. Loop will retry on next tick. =====" | tee -a "${RALPH_LOG:-/dev/null}"
+    fi
+    return 1
+  fi
+
+  # Non-rate-limit error or success. Pass through the exit code. On a
+  # non-rate-limit error, do NOT mark the tier (so the next iteration will
+  # retry the same tier) and do NOT notify.
+  return "$rc"
+}
+
+# CLI entrypoint: `ralph-dispatch <role> "$PROMPT"` — for smoke tests and
+# manual invocations. The sourced function above is the real path used by
+# the loops.
+if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
+  if [ "$#" -ne 2 ]; then
+    echo "usage: ralph-dispatch <reviewer|engineer> \"PROMPT\"" >&2
+    exit 2
+  fi
+  RALPH_LOG="${RALPH_LOG:-/dev/stderr}" dispatch_role "$1" "$2"
+  rc=$?
+  printf '%s' "$RALPH_DISPATCH_OUTPUT"
+  exit "$rc"
+fi
