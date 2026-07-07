@@ -18,7 +18,8 @@
 set -euo pipefail
 
 # Cron runs with a minimal environment; make the toolchain reachable.
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export HOME="$HOME"
+ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 LOG="$HOME/engineer-board.log"
 LOCKFILE="$HOME/.engineer-board.lock"

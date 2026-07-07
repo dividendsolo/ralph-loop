@@ -18,7 +18,8 @@
 set -uo pipefail
 
 # Reachable toolchain even under a minimal (cron) environment.
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export HOME="$HOME"
+ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 N="${1:-${REVIEW_ITERS:-5}}"
 
