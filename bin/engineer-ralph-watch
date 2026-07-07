@@ -4,13 +4,13 @@
 #
 # Why not a TUI loop: each ticket MUST run in its own fresh hermes context (Ralph
 # keeps state in Linear/GitHub/the repo, never in the context window). So this
-# runs the same headless oneshot per ticket as `afk-ralph` and tails the live
+# runs the same headless oneshot per ticket as `engineer-ralph` and tails the live
 # log alongside, rather than sharing one bloated TUI session across tickets.
 #
 # This is a thin wrapper: the loop, the per-iteration retry, and the persistent
-# $RALPH_LOG mirroring all live in `afk-ralph` — so the resilience fixes apply
-# whether you run `afk-ralph` or `afk-ralph-watch`. This script only adds the
-# live log stream. `set -e` is intentionally NOT used (a non-zero afk-ralph exit
+# $RALPH_LOG mirroring all live in `engineer-ralph` — so the resilience fixes apply
+# whether you run \`engineer-ralph\` or \`engineer-ralph-watch\`. This script only adds the
+# live log stream. \`set -e\` is intentionally NOT used (a non-zero engineer-ralph exit
 # should still fall through to the trap so the background tail is cleaned up).
 #
 # For a single ticket you can watch instead, use `ralph-once-tui`.
@@ -20,12 +20,12 @@ export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 N="${1:-}"
 if [ -z "$N" ]; then
-  echo "Usage: afk-ralph-watch <iterations>" >&2
+  echo "Usage: engineer-ralph-watch <iterations>" >&2
   exit 1
 fi
 
 RALPH_LOG="${RALPH_LOG:-$HOME/ralph.log}"
-echo "afk-ralph-watch: streaming live agent log; persistent run log at $RALPH_LOG" >&2
+echo "engineer-ralph-watch: streaming live agent log; persistent run log at $RALPH_LOG" >&2
 
 # Stream the live agent log (tool calls + reasoning) in the background; stop it
 # when the loop finishes or we are interrupted.
@@ -33,4 +33,4 @@ hermes logs -f --component agent >&2 &
 LOG_PID=$!
 trap 'kill "$LOG_PID" 2>/dev/null || true' EXIT INT TERM
 
-afk-ralph "$N"
+engineer-ralph "$N"

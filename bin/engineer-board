@@ -1,6 +1,6 @@
 #!/bin/bash
-# work-board: cron entrypoint for the WORKER Ralph loop (engineer role).
-# The mirror of review-board: cron fires this on a schedule; it kicks off `afk-ralph`,
+# engineer-board: cron entrypoint for the ENGINEER Ralph loop.
+# The mirror of review-board: cron fires this on a schedule; it kicks off \`engineer-ralph\`,
 # which invokes the `engineer` skill once per iteration (one eligible ticket each)
 # until the board is clear or the iteration budget is reached.
 #
@@ -13,24 +13,24 @@
 #
 # Single-instance lock: a loop pass can outlast the cron interval, so overlapping
 # ticks would race (two workers on one board). flock makes a new invocation SKIP if a
-# pass is already running. Polling is cheap because afk-ralph exits early when the
+# pass is already running. Polling is cheap because engineer-ralph exits early when the
 # board has nothing eligible (`<promise>NO_TICKETS</promise>`).
 set -euo pipefail
 
 # Cron runs with a minimal environment; make the toolchain reachable.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
-LOG="$HOME/work-board.log"
-LOCKFILE="$HOME/.work-board.lock"
-# Max tickets to drain per cron tick; afk-ralph exits earlier on NO_TICKETS. Override
-# with WORK_ITERS in the environment.
-ITERS="${WORK_ITERS:-5}"
+LOG="$HOME/engineer-board.log"
+LOCKFILE="$HOME/.engineer-board.lock"
+# Max tickets to drain per cron tick; engineer-ralph exits earlier on NO_TICKETS. Override
+# with RALPH_ITERS in the environment.
+RALPH_ITERS="${RALPH_ITERS:-5}"
 
 # Acquire the single-instance lock (non-blocking). If held, a pass is already in
 # flight; skip quietly rather than pile on and race it.
 exec 9>"$LOCKFILE"
 if ! flock -n 9; then
-  echo "===== work-board skipped: a pass is already running ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+  echo "===== engineer-board skipped: a pass is already running ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
   exit 0
 fi
 
@@ -39,16 +39,16 @@ fi
 # via basename match, so this stays machine-agnostic (laptop /Users/... vs VPS
 # /home/div/code/...). jq's select returns cleanly empty (exit 0) if a name is
 # not registered, unlike grep.
-# afk-ralph logs to $LOG (RALPH_LOG) instead of its default ~/ralph.log, matching
+# engineer-ralph logs to $LOG (RALPH_LOG) instead of its default ~/ralph.log, matching how
 # how review-board keeps a dedicated board log.
 AFK="$HOME/.claude/afk.json"
 for NAME in skills rep-sheet; do
   while IFS= read -r REPO; do
     [ -n "$REPO" ] || continue
     if [ ! -d "$REPO" ]; then
-      echo "===== work-board: skipping $REPO (not cloned) ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+      echo "===== engineer-board: skipping $REPO (not cloned) ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
       continue
     fi
-    RALPH_REPO="$REPO" RALPH_LOG="$LOG" afk-ralph "$ITERS" || echo "===== work-board: afk-ralph failed for $REPO ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+    RALPH_REPO="$REPO" RALPH_LOG="$LOG" engineer-ralph "$RALPH_ITERS" || echo "===== engineer-board: engineer-ralph failed for $REPO ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
   done < <(jq -r --arg n "$NAME" '.repos | keys[] | select(test("/" + $n + "$"))' "$AFK")
 done

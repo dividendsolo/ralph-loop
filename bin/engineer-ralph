@@ -17,7 +17,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 N="${1:-}"
 if [ -z "$N" ]; then
-  echo "Usage: afk-ralph <iterations>" >&2
+  echo "Usage: engineer-ralph <iterations>" >&2
   exit 1
 fi
 
@@ -45,7 +45,7 @@ PROMPT="Use the engineer skill to pick up and carry EXACTLY ONE ticket forward o
 # shellcheck source=ralph-dispatch
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
 
-cd "$REPO" || { echo "afk-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
+cd "$REPO" || { echo "engineer-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
 # Mirror banners + hermes output to the persistent log as well as the terminal.
 log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
@@ -57,7 +57,7 @@ log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
 # Anthropic limit lifts.
 rm -f "$HOME/.${RALPH_LOOP_NAME}-rate-limited"
 
-log "===== afk-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
+log "===== engineer-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
 
 # Pull the skills playbook + this repo to current before working, so the agent
 # never runs a stale engineer skill or branches off a behind main.
