@@ -70,7 +70,7 @@ for ((i=1; i<=N; i++)); do
 
   result=""
   rc=0
-  for attempt in 1 2; do
+  for attempt in 1 2 3 4; do
     # Capture stdout+stderr together so any failure is preserved and logged.
     # ralph-dispatch selects Hermes as the engineer primary today; once ENG-100
     # lands, switch the case in ralph-dispatch to `claude --agent engineer` and
