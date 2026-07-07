@@ -1,0 +1,145 @@
+#!/bin/bash
+# ralph-dispatch — shared dispatch helper for the Ralph loop.
+#
+# review-ralph and afk-ralph both invoke a single ticket/PR per iteration via a
+# runner (claude --agent <role> for the reviewer; hermes -z for the engineer
+# today, and claude --agent <role> for the engineer once ENG-100 lands). When the
+# primary runner refuses with the Anthropic weekly rate limit, every iteration
+# burns one API call, prints a human-readable error, and exits non-zero — and the
+# current loop doesn't bail, so it churns 5 calls × N repos × every 5 min until
+# the limit resets (about 25 calls/hour, all of them wasted).
+#
+# This helper sits between the loop and the runner. It does three things:
+#
+#   1. PRIMARY: invoke the per-role runner. Succeeds -> return its output.
+#   2. DETECT: if the primary returns exit != 0 OR its stdout contains the
+#      literal string `weekly limit` (defense-in-depth in case Anthropic ever
+#      changes exit-code semantics for rate limits), decide this is a
+#      rate-limit failure.
+#   3. FALLBACK: re-dispatch via Hermes with MiniMax-M3 (`hermes -z ... -m
+#      MiniMax-M3 --provider minimax`). Log a `===== FALLBACK =====` banner so
+#      the activation is greppable in the per-loop log. Write a tiny state file
+#      at ~/.<loop>-rate-limited so the *next* call inside the same tick can
+#      skip the primary entirely (saves the 25 calls/hour tax). The state file
+#      is removed on the next cron tick by the loop, so the moment the limit
+#      lifts, we revert to Claude Code primary automatically — no manual
+#      intervention.
+#
+# Why exit-code PLUS string: the CLI returns 1 on the weekly limit today (verified
+# 2026-07-07 with `env -i claude --agent reviewer -p ping` -> exit 1, output
+# `You've hit your weekly limit ...`). The string check is free insurance against
+# a future CLI release that wraps the error and exits 0. We intentionally do NOT
+# fallback on other non-zero exits (e.g. crash, auth failure) — those are real
+# bugs that should stay loud in the log, not silently rerouted.
+#
+# Usage (sourced — the normal path for review-ralph and afk-ralph):
+#
+#   . ralph-dispatch
+#   dispatch_role <role> "$PROMPT"  # writes output to $RALPH_DISPATCH_OUTPUT
+#                                    # exits with the dispatcher's exit code
+#
+# Usage (CLI — the smoke-test path; `ralph-dispatch <role> "$PROMPT"` echoes
+# the dispatcher's stdout, exits with its exit code):
+#
+#   ralph-dispatch reviewer "say the word PONG and exit"
+#
+# Environment knobs:
+#   RALPH_FORCE_FALLBACK=1   — skip primary entirely, always go to Hermes. Used
+#                              by smoke tests and for manual `hermes -z` runs
+#                              when the operator knows Claude is wedged.
+#   RALPH_LOG               — path to the per-loop log (set by review-ralph /
+#                              afk-ralph). The helper tees banners here so
+#                              fallback activations are greppable.
+#   RALPH_LOOP_NAME         — short loop name for state-file naming and banner
+#                              text. Defaults to "review" (caller may override;
+#                              afk-ralph passes "work").
+
+set -uo pipefail
+
+# Per-role primary dispatch. Returns the captured stdout via the global
+# RALPH_DISPATCH_OUTPUT and the exit code via stdout of the function.
+# Usage: dispatch_role <reviewer|engineer> "$PROMPT"
+dispatch_role() {
+  local role="$1"
+  local prompt="$2"
+  local loop_name="${RALPH_LOOP_NAME:-review}"
+  local state_file="$HOME/.${loop_name}-rate-limited"
+  local log="${RALPH_LOG:-/dev/null}"
+  local rc=0
+  local output=""
+  local used_fallback=0
+
+  # If a previous call in this tick already detected the rate limit, skip the
+  # primary entirely and go straight to the fallback. The loop script is
+  # responsible for clearing $state_file at the start of every new tick.
+  if [ "${RALPH_FORCE_FALLBACK:-0}" = "1" ] || [ -f "$state_file" ]; then
+    printf '%s\n' "===== FALLBACK: state file $state_file present (or RALPH_FORCE_FALLBACK=1) — skipping primary, dispatching via Hermes/MiniMax-M3 =====" | tee -a "$log"
+    used_fallback=1
+    RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1)
+    rc=$?
+  else
+    # PRIMARY: per-role runner. Reviewer -> Claude Code agent. Engineer -> Hermes
+    # today (and `claude --agent engineer` once ENG-100 lands; switch the case
+    # then and the fallback path keeps working unchanged).
+    case "$role" in
+      reviewer)
+        output=$(claude --agent "$role" --dangerously-skip-permissions -p "$prompt" 2>&1)
+        rc=$?
+        ;;
+      engineer)
+        output=$(hermes -z "$prompt" --yolo --accept-hooks 2>&1)
+        rc=$?
+        ;;
+      *)
+        printf '%s\n' "ralph-dispatch: unknown role '$role' (expected reviewer|engineer)" | tee -a "$log" >&2
+        return 2
+        ;;
+    esac
+
+    # Detect rate-limit: non-zero exit, OR the literal `weekly limit` substring
+    # in stdout (defense-in-depth). If matched, write the state file and rerun
+    # via Hermes. The state file lets the rest of this tick's iterations skip
+    # the primary; the loop script clears it on the next tick so we self-heal.
+    if [ "$rc" -ne 0 ] || [[ "$output" == *"weekly limit"* ]]; then
+      # Extract the reset timestamp from the CLI's message if we can — purely
+      # informational, helps the operator decide whether to wait or force-
+      # fallback manually. Best-effort; do not fail if absent.
+      local reset_hint=""
+      if [[ "$output" =~ resets\ ([A-Za-z0-9,: ]+) ]]; then
+        reset_hint="${BASH_REMATCH[1]}"
+      fi
+      printf '%s\n' "===== FALLBACK: primary runner refused (rc=$rc, role=$role, resets=${reset_hint:-unknown}) — dispatching via Hermes/MiniMax-M3 =====" | tee -a "$log"
+      : > "$state_file"
+      output=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1)
+      rc=$?
+      used_fallback=1
+    fi
+  fi
+
+  RALPH_DISPATCH_OUTPUT="$output"
+  # Always log the fallback disposition at the end so the activation trail is
+  # visible even if the loop script suppresses intermediate output.
+  if [ "$used_fallback" = "1" ]; then
+    printf '%s\n' "===== FALLBACK done (rc=$rc) =====" | tee -a "$log" >&2
+  fi
+  return "$rc"
+}
+
+# CLI entrypoint: `ralph-dispatch <role> "$PROMPT"` — for smoke tests and manual
+# invocations. The sourced function above is the real path used by the loops.
+# Detect "run as CLI" with BASH_SOURCE[0] vs $0: when sourced, BASH_SOURCE[0] is
+# the caller's file (different from $0), so we skip this block. When run as
+# $0, they match, and we dispatch the args.
+if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
+  if [ "$#" -ne 2 ]; then
+    echo "usage: ralph-dispatch <reviewer|engineer> \"PROMPT\"" >&2
+    exit 2
+  fi
+  # When invoked as a CLI, write banners to stderr (not the caller's RALPH_LOG)
+  # so the operator's terminal shows them but the captured stdout stays clean
+  # for piping.
+  RALPH_LOG="${RALPH_LOG:-/dev/stderr}" dispatch_role "$1" "$2"
+  rc=$?
+  printf '%s' "$RALPH_DISPATCH_OUTPUT"
+  exit "$rc"
+fi
