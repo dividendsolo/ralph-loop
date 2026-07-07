@@ -35,8 +35,15 @@ fi
 # Multi-repo: review every repo registered in afk.json (a single-repo default left
 # non-docket PRs rotting In Review — see ENG-99). A failed pass on one repo must
 # not stop the others.
+#
+# Iteration order is pinned by operator preference: skills > rep-sheet > docket.
+# Paths are resolved from afk.json via basename match, so this stays
+# machine-agnostic (laptop /Users/... vs VPS /home/div/code/...). A name absent
+# from afk.json is silently skipped, same as before.
 AFK="$HOME/.claude/afk.json"
-for REPO in $(jq -r ".repos | keys[]" "$AFK"); do
+for NAME in skills rep-sheet docket; do
+  REPO=$(jq -r --arg n "$NAME" '.repos | keys[] | select(test("/" + $n + "$"))' "$AFK")
+  if [ -z "$REPO" ]; then continue; fi
   if [ ! -d "$REPO" ]; then
     echo "===== review-board: skipping $REPO (not cloned) ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====" >> "$LOG"
     continue
