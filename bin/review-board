@@ -29,6 +29,9 @@ if ! flock -n 9; then
   exit 0
 fi
 
+# Clear stale rate-limit state from previous ticks so the primary path is used
+rm -f "$HOME/.review-rate-limited"
+
 # review-ralph tees its own output to $LOG, so do NOT redirect here (that would
 # double-write every line). Its stdout copy goes to cron's (absent) mailer.
 #

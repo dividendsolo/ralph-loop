@@ -35,6 +35,9 @@ if ! flock -n 9; then
   exit 0
 fi
 
+# Clear stale rate-limit state from previous ticks so the primary path is used
+rm -f "$HOME/.work-rate-limited"
+
 # Scope: skills + rep-sheet. Worker scope is unchanged; iteration order is
 # pinned by operator preference (skills first). Paths are resolved from afk.json
 # via basename match, so this stays machine-agnostic (laptop /Users/... vs VPS
