@@ -113,11 +113,11 @@ dispatch_role() {
         ;;
     esac
 
-    # Detect rate-limit: non-zero exit, OR the literal `weekly limit` substring
-    # in stdout (defense-in-depth). If matched, write the state file and rerun
-    # via Hermes. The state file lets the rest of this tick's iterations skip
-    # the primary; the loop script clears it on the next tick so we self-heal.
-    if [ "$rc" -ne 0 ] || [[ "$output" == *"weekly limit"* ]]; then
+    # Detect rate-limit: exit 1 (Claude Code rate limit), OR the literal
+    # `weekly limit` string (defense-in-depth). Do NOT fallback on other
+    # non-zero exits (SIGKILL from watchdog, crash, auth failure) — those
+    # are real bugs and should stay loud, not silently rerouted.
+    if [ "$rc" -eq 1 ] || [[ "$output" == *"weekly limit"* ]]; then
       # Extract the reset timestamp from the CLI's message if we can — purely
       # informational, helps the operator decide whether to wait or force-
       # fallback manually. Best-effort; do not fail if absent.
