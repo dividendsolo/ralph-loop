@@ -69,33 +69,13 @@ dispatch_role() {
   local output=""
   local used_fallback=0
 
-  # If a previous call in this tick already detected the rate limit, skip the
-  # primary and go straight to the fallback — unless the reset time has passed.
+  # State file is only relevant for Claude Code rate limits. Since both
+  # roles use Hermes (no Claude Code), clear it and always try primary.
+  [ -f "$state_file" ] && rm -f "$state_file"
+
   if [ "${RALPH_FORCE_FALLBACK:-0}" = "1" ]; then
     used_fallback=1
-  elif [ -f "$state_file" ]; then
-    local reset_ts
-    reset_ts=$(cat "$state_file" 2>/dev/null || true)
-    if [ -n "$reset_ts" ] && [ "$(date -u +%s)" -ge "$reset_ts" ] 2>/dev/null; then
-      # Reset time has passed — clear the file and try primary
-      rm -f "$state_file"
-    else
-      used_fallback=1
-    fi
-  fi
-
-  if [ "$used_fallback" = "1" ]; then
-    # Determine if we were forced or deferred by rate-limit state file
-    if [ "${RALPH_FORCE_FALLBACK:-0}" = "1" ]; then
-      printf '%s\n' "===== FORCE-FALLBACK: RALPH_FORCE_FALLBACK=1 — using Hermes =====\n" | tee -a "$log"
-    elif [ -f "$state_file" ] && [ -s "$state_file" ]; then
-      local reset_ts
-      reset_ts=$(cat "$state_file" 2>/dev/null)
-      printf '%s\n' "===== primary rate-limited until $(date -u -d @$reset_ts +%b %d, %H:%MZ 2>/dev/null || echo unknown) — using Hermes =====\n" | tee -a "$log"
-    else
-      printf '%s\n' "===== FALLBACK: state file present — using Hermes =====\n" | tee -a "$log"
-    fi
-    used_fallback=1
+    printf '%s\n' "===== FORCE-FALLBACK: RALPH_FORCE_FALLBACK=1 — using Hermes =====\n" | tee -a "$log"
     RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
     rc=$?
   else
