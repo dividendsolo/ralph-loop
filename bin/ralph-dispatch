@@ -94,7 +94,11 @@ dispatch_role() {
     # today (and `claude --agent engineer` once ENG-100 lands; switch the case
     # then and the fallback path keeps working unchanged).
     case "$role" in
-      reviewer|engineer)
+      reviewer)
+        output=$(claude --agent "$role" --dangerously-skip-permissions -p "$prompt" 2>&1)
+        rc=$?
+        ;;
+      engineer)
         output=$(hermes -z "$prompt" --yolo --accept-hooks 2>&1 | tee -a "$HOME/.hermes-live-output")
         rc=$?
         ;;
