@@ -78,6 +78,11 @@ for ((i=1; i<=N; i++)); do
     dispatch_role engineer "$PROMPT"
     rc=$?
     result="$RALPH_DISPATCH_OUTPUT"
+
+    # Extract ticket from output and write to live status file for dashboard
+    local ticket_id
+    ticket_id=$(printf '%s' "$result" | grep -oP 'ENG-\d+' 2>/dev/null | head -1)
+    [ -n "$ticket_id" ] && printf '%s\n' "$ticket_id" > "$HOME/.engineer-current-ticket"
     # Success is judged by OUTPUT, not exit code. hermes -z exits non-zero even
     # on a fully successful ticket (git/PR/hook activity during teardown), so the
     # exit code is an unreliable success signal. A genuine startup crash produces
