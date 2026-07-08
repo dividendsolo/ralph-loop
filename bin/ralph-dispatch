@@ -90,15 +90,13 @@ dispatch_role() {
     RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
     rc=$?
   else
-    # PRIMARY: per-role runner. Reviewer -> Claude Code agent. Engineer -> Hermes
-    # today (and `claude --agent engineer` once ENG-100 lands; switch the case
-    # then and the fallback path keeps working unchanged).
+    # PRIMARY: per-role runner. Both engineer and reviewer use Hermes today.
+    # (Claude Code would be preferred for its autonomous mode, but the weekly
+    # Anthropic rate limit on the VPS would force a noisy fallback cycle. Until
+    # ENG-100 lands Claude Code support for the engineer, both roles go through
+    # Hermes — zero rate-limit drama, same model.)
     case "$role" in
-      reviewer)
-        output=$(claude --agent "$role" --dangerously-skip-permissions -p "$prompt" 2>&1)
-        rc=$?
-        ;;
-      engineer)
+      reviewer|engineer)
         output=$(hermes -z "$prompt" --yolo --accept-hooks 2>&1 | tee -a "$HOME/.hermes-live-output")
         rc=$?
         ;;
