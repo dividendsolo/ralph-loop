@@ -87,7 +87,7 @@ dispatch_role() {
   if [ "$used_fallback" = "1" ]; then
     printf '%s\n' "===== FALLBACK: state file $state_file present (or RALPH_FORCE_FALLBACK=1) — skipping primary, dispatching via Hermes/MiniMax-M3 =====" | tee -a "$log"
     used_fallback=1
-    RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee "$HOME/.hermes-live-output")
+    RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
     rc=$?
   else
     # PRIMARY: per-role runner. Reviewer -> Claude Code agent. Engineer -> Hermes
@@ -99,7 +99,7 @@ dispatch_role() {
         rc=$?
         ;;
       engineer)
-        output=$(hermes -z "$prompt" --yolo --accept-hooks 2>&1 | tee "$HOME/.hermes-live-output")
+        output=$(hermes -z "$prompt" --yolo --accept-hooks 2>&1 | tee -a "$HOME/.hermes-live-output")
         rc=$?
         ;;
       *)
@@ -133,7 +133,7 @@ dispatch_role() {
       else
         : > "$state_file"
       fi
-      output=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee "$HOME/.hermes-live-output")
+      output=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
       rc=$?
       used_fallback=1
     fi
