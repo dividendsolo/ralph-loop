@@ -85,22 +85,25 @@ dispatch_role() {
   fi
 
   if [ "$used_fallback" = "1" ]; then
-    printf '%s\n' "===== FALLBACK: state file $state_file present (or RALPH_FORCE_FALLBACK=1) — skipping primary, dispatching via Hermes/MiniMax-M3 =====" | tee -a "$log"
+    # Determine if we were forced or deferred by rate-limit state file
+    if [ "${RALPH_FORCE_FALLBACK:-0}" = "1" ]; then
+      printf '%s\n' "===== FORCE-FALLBACK: RALPH_FORCE_FALLBACK=1 — using Hermes =====\n" | tee -a "$log"
+    elif [ -f "$state_file" ] && [ -s "$state_file" ]; then
+      local reset_ts
+      reset_ts=$(cat "$state_file" 2>/dev/null)
+      printf '%s\n' "===== primary rate-limited until $(date -u -d @$reset_ts +%b %d, %H:%MZ 2>/dev/null || echo unknown) — using Hermes =====\n" | tee -a "$log"
+    else
+      printf '%s\n' "===== FALLBACK: state file present — using Hermes =====\n" | tee -a "$log"
+    fi
     used_fallback=1
     RALPH_DISPATCH_OUTPUT=$(hermes -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
     rc=$?
   else
-    # PRIMARY: per-role runner. Reviewer -> Claude Code agent. Engineer -> Hermes
-    # today (and `claude --agent engineer` once ENG-100 lands; switch the case
-    # then and the fallback path keeps working unchanged). The rate-limit timestamp
-    # in the state file skips the primary when Claude Code is locked and goes
-    # straight to the Hermes fallback until the reset passes.
+    # PRIMARY: both roles use Hermes. Same model, same behavior, no rate-limit
+    # drama. The rate-limit timestamp fallback is preserved for future Claude Code
+    # use but won't fire today.
     case "$role" in
-      reviewer)
-        output=$(claude --agent "$role" --dangerously-skip-permissions -p "$prompt" 2>&1)
-        rc=$?
-        ;;
-      engineer)
+      reviewer|engineer)
         output=$(hermes -z "$prompt" --yolo --accept-hooks 2>&1 | tee -a "$HOME/.hermes-live-output")
         rc=$?
         ;;
