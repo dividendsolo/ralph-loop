@@ -16,10 +16,10 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 LOG="$HOME/review-board.log"
-LOCKFILE="$HOME/.review-board.lock"
+LOCKFILE="$HOME/.afk-agent.lock"
 # Max PRs to drain per cron tick; review-ralph exits earlier on NO_PRS. Override
 # with REVIEW_ITERS in the environment.
-ITERS="${REVIEW_ITERS:-5}"
+ITERS="${REVIEW_ITERS:-2}"
 
 # Acquire the single-instance lock (non-blocking). If held, a pass is already in
 # flight — skip quietly rather than pile on and race it.

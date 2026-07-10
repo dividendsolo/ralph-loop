@@ -22,10 +22,10 @@ export HOME="$HOME"
  export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 LOG="$HOME/engineer-board.log"
-LOCKFILE="$HOME/.engineer-board.lock"
+LOCKFILE="$HOME/.afk-agent.lock"
 # Max tickets to drain per cron tick; engineer-ralph exits earlier on NO_TICKETS. Override
 # with RALPH_ITERS in the environment.
-RALPH_ITERS="${RALPH_ITERS:-5}"
+RALPH_ITERS="${RALPH_ITERS:-2}"
 
 # Acquire the single-instance lock (non-blocking). If held, a pass is already in
 # flight; skip quietly rather than pile on and race it.
