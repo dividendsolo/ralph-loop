@@ -31,7 +31,7 @@ RALPH_ITERS="${RALPH_ITERS:-2}"
 # flight; skip quietly rather than pile on and race it.
 exec 9>"$LOCKFILE"
 if ! flock -n 9; then
-  echo "===== engineer-board skipped: a pass is already running ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+  echo "===== engineer-board skipped: a pass is already running ($(TZ=America/New_York date +'%b %d %I:%M:%S %p %Z')) =====" >> "$LOG"
   exit 0
 fi
 
@@ -50,9 +50,9 @@ for NAME in skills rep-sheet; do
   while IFS= read -r REPO; do
     [ -n "$REPO" ] || continue
     if [ ! -d "$REPO" ]; then
-      echo "===== engineer-board: skipping $REPO (not cloned) ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+      echo "===== engineer-board: skipping $REPO (not cloned) ($(TZ=America/New_York date +'%b %d %I:%M:%S %p %Z')) =====" >> "$LOG"
       continue
     fi
-    RALPH_REPO="$REPO" RALPH_LOG="$LOG" engineer-ralph "$RALPH_ITERS" || echo "===== engineer-board: engineer-ralph failed for $REPO ($(date -u +'%Y-%m-%dT%H:%M:%SZ')) =====" >> "$LOG"
+    RALPH_REPO="$REPO" RALPH_LOG="$LOG" engineer-ralph "$RALPH_ITERS" || echo "===== engineer-board: engineer-ralph failed for $REPO ($(TZ=America/New_York date +'%b %d %I:%M:%S %p %Z')) =====" >> "$LOG"
   done < <(jq -r --arg n "$NAME" '.repos | keys[] | select(test("/" + $n + "$"))' "$AFK")
 done

@@ -58,7 +58,7 @@ log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
 # Anthropic limit lifts.
 rm -f "$HOME/.${RALPH_LOOP_NAME}-rate-limited"
 
-log "===== engineer-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(date -u +%FT%TZ)) ====="
+log "===== engineer-ralph start: $N iteration(s), repo=$REPO, log=$RALPH_LOG ($(TZ=America/New_York date +"%b %d %I:%M:%S %p %Z")) ====="
 
 # Pull the skills playbook + this repo to current before working, so the agent
 # never runs a stale engineer skill or branches off a behind main.
@@ -66,7 +66,7 @@ ralph-sync "$REPO" 2>&1 | tee -a "$RALPH_LOG" || true
 
 failures=0
 for ((i=1; i<=N; i++)); do
-  log "===== ralph board iteration $i / $N ($(date -u +%H:%M:%SZ)) ====="
+  log "===== ralph board iteration $i / $N ($(TZ=America/New_York date +"%I:%M:%S %p %Z")) ====="
 
   result=""
   rc=0
