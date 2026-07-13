@@ -15,7 +15,7 @@ bin/
   afk-ralph-watch  afk-ralph with the live agent log streamed beside it, to watch.
   ralph-init     Readiness check (repo, git identity, hermes, gh, engineer skill).
   review-board   One senior-reviewer pass over AFK "In Review" PRs (claude, headless).
-  work-board     One autonomous worker pass, scoped to rep-sheet (claude, headless).
+  engineer-board One autonomous worker pass, scoped to rep-sheet (claude, headless).
 install.sh       Symlink bin/ onto PATH.
 crontab.example  Schedule the reviewer and worker passes.
 ```
