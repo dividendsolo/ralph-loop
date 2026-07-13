@@ -104,26 +104,58 @@ class Handler(http.server.BaseHTTPRequestHandler):
         for s in sessions:
             legs_info[s["leg"]] = s
 
+        # Map display-leg -> JSON-key. The engineer row reflects what
+        # engineer-ralph writes; on origin/main engineer-ralph records under
+        # the `worker` key (per the loop-integration test contract), so the
+        # engineer's JSON lookup falls back to `worker` first. The legacy
+        # `engineer` key is kept as a last-resort fallback for any fixture
+        # that still carries PR #7's old row shape; in normal operation that
+        # tree is stale and should never be the source of a live cell.
+        LEG_JSON_KEYS = {
+            "engineer": ["worker", "engineer"],
+            "reviewer": ["reviewer"],
+        }
+
         rows = []
         for leg in ["engineer", "reviewer"]:
             live = legs_info.get(leg, {})
-            # Get board from JSON (most recent repo for this leg)
+            # JSON-derived cell data: populated from the most recent tick's
+            # row regardless of whether the leg is currently running. A live
+            # leg can override these via log-scraping below, but the idle row
+            # used to render all-dashes even when fresh JSON data was sitting
+            # in ~/ralph-status.json. That hid the (leg, repo) summary the
+            # card's AC2 names ("last tick + next tick + outcome + tier +
+            # repo for every cell"), so the idle path now reads JSON too.
             repo = "-"
             ticket = "-"
             tier_label = "-"
             next_str = "-"
+            outcome = "-"
+            best_tick_ts = ""
             try:
-                iters = json_data.get("legs", {}).get(leg, {}).get("iterations", {})
+                iters = {}
+                for key in LEG_JSON_KEYS[leg]:
+                    candidate = json_data.get("legs", {}).get(key, {}).get("iterations", {})
+                    if candidate:
+                        iters = candidate
+                        break
                 if iters:
                     best_repo, best = max(iters.items(), key=lambda kv: kv[1].get("last_tick", ""))
                     last_ts = best.get("last_tick", "")
+                    best_tick_ts = last_ts
                     if last_ts:
                         try:
                             tick_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
-                            if (now_utc - tick_dt).total_seconds() < 900:
+                            # Surface the cell if the tick is within the last
+                            # 24h. The card spec names "(leg, repo) cell"
+                            # data; an idle leg whose last tick is days old
+                            # would be misleading if rendered identically to
+                            # a fresh idle, so cap at 24h.
+                            if (now_utc - tick_dt).total_seconds() < 86400:
                                 repo = best_repo
                                 if best.get("ticket"):
                                     ticket = best["ticket"]
+                                outcome = best.get("outcome", "-")
                                 next_dt = tick_dt.astimezone(ET) + timedelta(minutes=5)
                                 next_str = next_dt.strftime("%H:%M%Z")
                         except: pass
@@ -186,10 +218,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     f'<td style="font-size:12px;color:#5f6368">{action[:80]}</td><td>{next_str}</td></tr>'
                 )
             else:
+                # Idle leg: still surface the (leg, repo) summary the card's
+                # AC2 names. outcome + tier_label come from the JSON row;
+                # last_tick_ts is folded into the detail cell so the operator
+                # sees WHEN the leg was last active. A leg with no recorded
+                # tick at all (fresh install) renders "-" rows as before.
+                if best_tick_ts:
+                    detail = f"{outcome} @ {best_tick_ts[:16]}Z (tier {tier_label})"
+                else:
+                    detail = "-"
                 rows.append(
                     f'<tr><td>{leg}</td><td style="color:#5f6368">idle</td>'
-                    f'<td>-</td><td>-</td>'
-                    f'<td>-</td><td>-</td><td>-</td></tr>'
+                    f'<td>{repo}</td><td>{ticket}</td>'
+                    f'<td>{tier_label}</td><td style="font-size:12px;color:#5f6368">{detail}</td>'
+                    f'<td>{next_str}</td></tr>'
                 )
 
         eng_log = tail_file(os.path.join(HOME, "engineer-board.log"))
