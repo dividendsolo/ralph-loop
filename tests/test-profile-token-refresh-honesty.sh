@@ -4,25 +4,16 @@
 # when a per-profile token file exists but refresh-linear-token.py does not
 # honor the LINEAR_TOKEN_PATH env var.
 #
-# Background (from the ENG-133 review pass): the wrapper logs
-# "refreshing token at <per-profile-path>" then runs refresh-linear-token.py
-# with LINEAR_TOKEN_PATH=<per-profile-path>. The python script ignores
-# LINEAR_TOKEN_PATH and rewrites its hardcoded TOKENS_DIR/linear.json path.
-# On the box, that hardcoded path is ~/.hermes/mcp-tokens/linear.json --
-# the DEFAULT profile's token. The wrapper thus silently refreshes the
-# default token while the cron log claims a per-profile refresh succeeded.
-# That is silent misinformation, the failure mode ENG-159/ENG-171 are
-# meant to make loud.
-#
-# Per the ENG-133 agent brief: "If Hermes only supports interactive login
-# per profile (no headless refresh), do NOT fake it: document that
-# limitation clearly and make the per-profile TRACKER_UNREACHABLE signal
-# the safety net, so a dead profile token shows red instead of idling
-# silently." The wrapper must therefore either (a) skip per-profile
-# refreshes with a clear "not supported, run `hermes mcp login linear`
-# manually" log, or (b) actually refresh per-profile. This test pins the
-# (a) behavior: skip with a clear log, do NOT run the python script when
-# it cannot honor LINEAR_TOKEN_PATH.
+# Background: refresh-linear-token.py honors LINEAR_TOKEN_PATH since the
+# skills-repo ENG-133 follow-up, so the wrapper now genuinely refreshes
+# per-profile tokens. The honesty property this test pins: if the python
+# script regresses to ignoring LINEAR_TOKEN_PATH (mocked here -- it
+# rewrites the hardcoded default path instead), the wrapper must DETECT
+# that the per-profile file did not change and go loud: an ERROR line
+# naming the recovery command, no "refreshed OK" claim, and a non-zero
+# exit. Silently claiming a per-profile refresh that actually refreshed
+# the default token is the misinformation ENG-159/ENG-171 exist to
+# surface as red.
 #
 # Run: bash tests/test-profile-token-refresh-honesty.sh
 
@@ -84,9 +75,9 @@ PYEOF
 chmod +x "$TMP_BIN_PY/refresh-linear-token.py"
 
 # Seed the fake HOME with a per-profile token file for skills only.
-# No default token file. The wrapper, when it sees the per-profile file,
-# should NOT call the mock python script (because the mock would write
-# the default file, which is the silent-default-refresh bug).
+# No default token file. The wrapper will invoke the (buggy) mock with
+# LINEAR_TOKEN_PATH set; the mock leaves the per-profile file untouched,
+# which the wrapper must detect and report as a loud failure.
 PER_PROFILE_DIR="$TMP_HOME/.hermes/profiles/skills/mcp-tokens"
 mkdir -p "$PER_PROFILE_DIR"
 PER_PROFILE_PATH="$PER_PROFILE_DIR/linear.json"
@@ -104,14 +95,12 @@ HOME="$TMP_HOME" PATH="$TMP_BIN_PY:$TMP_BIN:$SYSTEM_PATH" \
 rc=$?
 set -e
 
-DEFAULT_TOKEN="$TMP_HOME/.hermes/mcp-tokens/linear.json"
-
-# ASSERTION 1: the mock must NOT have been called -- no default token
-# file should exist. If the wrapper ran the mock while only a
-# per-profile token was present, the mock would have written the
-# default file, which is exactly the silent-default-refresh bug.
-if [ -e "$DEFAULT_TOKEN" ]; then
-  fail "wrapper invoked refresh-linear-token.py while only a per-profile token existed; the python script (real or mocked) ignores LINEAR_TOKEN_PATH and would have refreshed the DEFAULT token silently. Log: $(cat "$TMP_LOG")"
+# ASSERTION 1: the wrapper must NOT claim the skills per-profile
+# refresh succeeded -- the mock left the per-profile file untouched, so
+# a "refreshed OK" line for repo='skills' is the silent-misinformation
+# bug.
+if grep -q "repo='skills' refreshed OK" "$TMP_LOG"; then
+  fail "wrapper claimed 'refreshed OK' for repo='skills' although the per-profile file never changed (script ignored LINEAR_TOKEN_PATH). Log: $(cat "$TMP_LOG")"
 fi
 
 # ASSERTION 2: the per-profile token file must be untouched.
@@ -119,17 +108,10 @@ PER_PROFILE_AFTER_CONTENT=$(cat "$PER_PROFILE_PATH")
 [ "$PER_PROFILE_BEFORE_CONTENT" = "$PER_PROFILE_AFTER_CONTENT" ] \
   || fail "wrapper modified the per-profile token file (fake refresh)"
 
-# ASSERTION 3: the wrapper's log must honestly describe what happened.
-# It must NOT print "refreshing token at <per-profile-path>" without
-# also naming the limitation. Acceptable phrasings include "skipped",
-# "does not honor", "manually", "not supported", or an explicit error
-# that names the limitation. A bare "refreshing token at <per-profile>"
-# line in the log is the silent-misinformation bug.
-if grep -qE "refreshing token at .*profiles/skills/mcp-tokens/linear\.json" "$TMP_LOG"; then
-  if ! grep -qE "(skipped|does not (support|honor)|not yet supported|manually|interactively)" "$TMP_LOG"; then
-    fail "wrapper logged 'refreshing token at <per-profile-path>' without a 'skipped' / 'does not honor' / 'manually' disclaimer (silent misinformation)"
-  fi
-fi
+# ASSERTION 3: the wrapper's log must name the failure and the recovery
+# command (loud, actionable ERROR for the skills profile).
+grep -qE "ERROR repo='skills'.*(did not update|ignored LINEAR_TOKEN_PATH|mcp login linear)" "$TMP_LOG" \
+  || fail "wrapper did not log a loud, actionable ERROR for the failed skills per-profile refresh. Log: $(cat "$TMP_LOG")"
 
 # ASSERTION 4: the wrapper must exit non-zero. The brief is explicit:
 # loud failure on dead per-profile tokens. Idling at exit 0 is the
