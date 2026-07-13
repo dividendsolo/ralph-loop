@@ -1,0 +1,225 @@
+#!/bin/bash
+# bin/pre-check-board - skills#15 (follow-up to ENG-159 / ENG-176).
+#
+# Cheap, deterministic, tracker-agnostic pre-check that gates whether the
+# engineer / reviewer loop should wake the agent for a given repo on this tick.
+#
+#   pre-check-board <leg> <repo-path>
+#
+# leg       engineer | reviewer
+# repo-path absolute path; must match a key in $HOME/.claude/afk.json
+#
+# Contract (matches the four acceptance criteria on skills#15):
+#   * Empty watched columns (per leg's pick list) -> exit 0, silent stdout.
+#     The caller treats this as "skip this iteration, log a skip line, do
+#     NOT spawn hermes / claude".
+#   * Watched column non-empty                    -> exit 0, prints sentinel
+#     "WORK_PRESENT" on stdout so callers in subshell-only mode can detect
+#     the case (and tests can too).
+#   * Tracker failure (auth / network / non-200)  -> exit 2, prints
+#     "TRACKER_UNREACHABLE: <reason>" on stderr. This is the red/error state
+#     that the heartbeat recorder promotes to outcome=failed with detail
+#     mentioning tracker_unreachable. NEVER treated as empty; ENG-176
+#     surfaced this signal because a silent skip on a real outage is worse
+#     than a noisy one.
+#
+# Pure shell: no hermes, no MCP, no LLM. The only network surface is `gh
+# project item-list` (for github-tracked repos) or `curl` against the Linear
+# GraphQL API with the bearer token from `gh auth token` (for linear-tracked
+# repos). Either is sub-second and zero-token.
+#
+# Watched columns per leg (mirrors the engineer / reviewer skill pick order):
+#   engineer: Ready for Agent | Changes Requested | In Progress
+#   reviewer: In Review
+set -uo pipefail
+
+# Prepend the per-profile bin dir (where `gh` / `jq` live under cron) WITHOUT
+# clobbering the caller's PATH. A previous version overwrote PATH here and
+# the pre-check silently lost access to `jq` (which isn't on the default
+# system path), so AC3 turned every check into TRACKER_UNREACHABLE.
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+
+# Source the resolver only if not already loaded. This keeps the script
+# standalone-runnable from cron (where it is invoked directly) AND from a
+# sourced call inside engineer-board / review-board.
+if ! type pre_check_resolve_tracker >/dev/null 2>&1; then
+  # shellcheck source=lib-profile-resolver.sh
+  . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-profile-resolver.sh" 2>/dev/null || true
+fi
+
+usage() {
+  echo "usage: pre-check-board <engineer|reviewer> <repo-path>" >&2
+  exit 64
+}
+
+[ "$#" = "2" ] || usage
+LEG="$1"
+REPO_PATH="$2"
+case "$LEG" in
+  engineer|reviewer) ;;
+  *) echo "pre-check-board: leg must be 'engineer' or 'reviewer', got '$LEG'" >&2; exit 64 ;;
+esac
+[ -d "$REPO_PATH" ] || { echo "pre-check-board: repo path not a directory: $REPO_PATH" >&2; exit 64; }
+
+# Watched-column names per leg. Kept as variables so the caller can grep
+# later if it wants; the GitHub/Linear probes filter on them.
+case "$LEG" in
+  engineer)
+    WATCHED='Ready for Agent|Changes Requested|In Progress'
+    ;;
+  reviewer)
+    WATCHED='In Review'
+    ;;
+esac
+
+# Resolve tracker + coordinates from afk.json. The resolver lives in
+# lib-profile-resolver.sh; if it can't be sourced (very minimal env) we fall
+# back to inline parsing so the script never silently no-ops on a missing lib.
+AFK="${HOME}/.claude/afk.json"
+[ -f "$AFK" ] || { echo "TRACKER_UNREACHABLE: afk.json not found at $AFK" >&2; exit 2; }
+
+if type pre_check_resolve_tracker >/dev/null 2>&1; then
+  resolved="$(pre_check_resolve_tracker "$REPO_PATH" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
+    TRACKER="${resolved%%$'\t'*}"
+    COORDS="${resolved#*$'\t'}"
+  fi
+fi
+
+if [ -z "${TRACKER:-}" ]; then
+  # Inline fallback: jq the afk.json for the repo path and read .tracker.
+  TRACKER=$(jq -r --arg p "$REPO_PATH" '.repos[$p].tracker // empty' "$AFK" 2>/dev/null || true)
+fi
+
+case "$TRACKER" in
+  github|linear) ;;
+  *) echo "TRACKER_UNREACHABLE: unknown/missing tracker for $REPO_PATH (got '$TRACKER')" >&2; exit 2 ;;
+esac
+
+# -------------------------------------------------------------------
+# Tracker probes. Each emits ONE of:
+#   stdout "WORK_PRESENT"  + exit 0  -> non-empty watched columns
+#   stdout ""              + exit 0  -> empty watched columns (skip the agent)
+#   stderr "TRACKER_UNREACHABLE: ..." + exit 2  -> red state
+# Pure shell: no hermes/MCP/LLM. AC4.
+# -------------------------------------------------------------------
+
+probe_github() {
+  # `gh project item-list <project-number> --owner <owner>` is the documented
+  # one-shot read of every project item with its Status field populated. The
+  # JSON shape returned by `gh` is stable: an `items` array whose entries
+  # carry a top-level `status` string (e.g. "Ready for Agent").
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "TRACKER_UNREACHABLE: gh not on PATH (github tracker)" >&2
+    return 2
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "TRACKER_UNREACHABLE: gh not authenticated (run 'gh auth login')" >&2
+    return 2
+  fi
+  local owner repo project items
+  # Resolve owner from the github.owner field first; fall back to the leading
+  # path segment of github.repo (e.g. "dividendsolo/skills" -> "dividendsolo").
+  # The pipe syntax is required because jq's `.split("/")[0]` is a method call
+  # on a string, not a path selector; the earlier `//`-fallback form was
+  # malformed jq and silently returned empty on every repo without a
+  # github.owner field, which made AC1 (idle tick) report TRACKER_UNREACHABLE
+  # instead of empty. (Root cause: a copy-paste of `.split(...)` from a
+  # string-pipe expression into a path-`//`-fallback chain.)
+  owner=$(jq -r --arg p "$REPO_PATH" '
+    .repos[$p].github.owner // (.repos[$p].github.repo | split("/")[0]) // empty
+  ' "$AFK" 2>/dev/null || true)
+  repo=$(jq -r --arg p "$REPO_PATH" '.repos[$p].github.repo // empty' "$AFK" 2>/dev/null || true)
+  project=$(jq -r --arg p "$REPO_PATH" '.repos[$p].github.project // empty' "$AFK" 2>/dev/null || true)
+  if [ -z "$owner" ] || [ -z "$repo" ]; then
+    echo "TRACKER_UNREACHABLE: afk.json github entry missing owner/repo for $REPO_PATH" >&2
+    return 2
+  fi
+  # Resolve project name -> project number via `gh project list`. If that
+  # name -> number lookup fails, that's an auth or perms failure, not empty.
+  local proj_num
+  if ! proj_num=$(gh project list --owner "$owner" --format json --limit 100 2>/dev/null \
+                   | jq -r --arg n "$project" '.projects[] | select(.title==$n) | .number' \
+                   | head -n1); then
+    echo "TRACKER_UNREACHABLE: gh project list failed for owner=$owner" >&2
+    return 2
+  fi
+  if [ -z "$proj_num" ]; then
+    echo "TRACKER_UNREACHABLE: project '$project' not found under owner '$owner'" >&2
+    return 2
+  fi
+  if ! items=$(gh project item-list "$proj_num" --owner "$owner" --format json --limit 200 2>/dev/null); then
+    echo "TRACKER_UNREACHABLE: gh project item-list failed for $owner/$project" >&2
+    return 2
+  fi
+  # `gh project item-list` JSON's per-item `status` is a top-level field whose
+  # value is the human-readable status name. Filter on $WATCHED with -E.
+  if printf '%s' "$items" | jq -r '.items[]? | (.status // "")' 2>/dev/null \
+       | grep -Eq "$WATCHED"; then
+    echo "WORK_PRESENT"
+    return 0
+  fi
+  return 0
+}
+
+probe_linear() {
+  # Linear probe: one GraphQL POST against https://api.linear.app/graphql with
+  # the bearer token from `gh auth token` (per-repo from afk.json in a future
+  # revision; today a single Linear token per operator is the supported shape).
+  # The query asks for issues in the team+project filtered to a state.type
+  # set; we map that set to the leg's watched columns.
+  local token team project state_filter
+  token=$(gh auth token 2>/dev/null || true)
+  if [ -z "$token" ]; then
+    echo "TRACKER_UNREACHABLE: gh auth token unavailable for Linear probe" >&2
+    return 2
+  fi
+  team=$(jq -r --arg p "$REPO_PATH" '.repos[$p].linear.team // empty' "$AFK" 2>/dev/null || true)
+  project=$(jq -r --arg p "$REPO_PATH" '.repos[$p].linear.project // empty' "$AFK" 2>/dev/null || true)
+  if [ -z "$team" ] || [ -z "$project" ]; then
+    echo "TRACKER_UNREACHABLE: afk.json linear entry missing team/project for $REPO_PATH" >&2
+    return 2
+  fi
+  case "$LEG" in
+    engineer) state_filter='["unstarted","started"]' ;;   # Ready/Changes/In Progress on Linear
+    reviewer) state_filter='["started"]' ;;                # In Review on Linear (started, not completed)
+  esac
+  local payload
+  payload=$(jq -n \
+    --arg team "$team" --arg project "$project" --argjson sf "$state_filter" \
+    '{query: "query($team: String!, $project: String!, $sf: [String!]!) { issuesV2(filter: {team: {name: {eq: $team}}, project: {name: {eq: $project}}, state: {type: {in: $sf}}}, first: 1) { nodes { id } } }", variables: {team: $team, project: $project, sf: $sf}}')
+  local resp http_code
+  resp=$(curl -sS -o /tmp/.pre-check-linear.$$ -w '%{http_code}' \
+           -X POST https://api.linear.app/graphql \
+           -H "Authorization: $token" \
+           -H "Content-Type: application/json" \
+           --data-binary "$payload" 2>/dev/null) || {
+    rm -f /tmp/.pre-check-linear.$$
+    echo "TRACKER_UNREACHABLE: curl failed talking to api.linear.app" >&2
+    return 2
+  }
+  http_code="$resp"
+  body=$(cat /tmp/.pre-check-linear.$$); rm -f /tmp/.pre-check-linear.$$
+  if [ "$http_code" != "200" ]; then
+    echo "TRACKER_UNREACHABLE: Linear API HTTP $http_code" >&2
+    return 2
+  fi
+  if printf '%s' "$body" | jq -e '.errors // empty' >/dev/null 2>&1; then
+    if printf '%s' "$body" | jq -e '.errors' >/dev/null 2>&1; then
+      echo "TRACKER_UNREACHABLE: Linear API returned errors: $(printf '%s' "$body" | jq -c '.errors')" >&2
+      return 2
+    fi
+  fi
+  # Non-empty `nodes` array -> work present. Empty -> skip the agent.
+  local count
+  count=$(printf '%s' "$body" | jq '.data.issuesV2.nodes | length' 2>/dev/null || echo 0)
+  if [ "$count" -gt 0 ]; then
+    echo "WORK_PRESENT"
+  fi
+  return 0
+}
+
+case "$TRACKER" in
+  github) probe_github ;;
+  linear) probe_linear ;;
+esac
