@@ -1,0 +1,184 @@
+#!/bin/bash
+# ralph-status - record one (leg, repo) heartbeat cell, render the page.
+#
+# Usage (sourced or CLI):
+#   ralph-status <leg> <repo> <outcome> <tier> [ticket [detail]]
+#
+#   leg     worker | reviewer
+#   repo    basename of the repo (e.g. skills, docket)
+#   outcome ok | failed | idle
+#   tier    0 (Hermes/MiniMax-M3) | 1 (Sonnet 5) | 2 (Hermes/MiniMax-M3)
+#   ticket  ticket/PR identifier (e.g. ENG-119, PR #8)
+#   detail  failure reason or verbose context
+#
+# Writes ~/ralph-status.json + ~/ralph-status.html. Each call updates one
+# (leg, repo) cell in the JSON; other cells preserved. Loops call this at
+# end of every iteration; last writer wins.
+# Render collapses per-repo cells into one row per leg (most recent tick).
+
+set -uo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+tier_name() {
+  case "$1" in
+    0) printf '%s' "Hermes/MiniMax-M3" ;;
+    1) printf '%s' "Sonnet 5" ;;
+    2) printf '%s' "Hermes/MiniMax-M3" ;;
+    *) printf '%s' "tier $1" ;;
+  esac
+}
+
+outcome_color() {
+  case "$1" in
+    ok)     printf '%s' "#137333" ;;
+    failed) printf '%s' "#c5221f" ;;
+    no_tickets|no_prs) printf '%s' "#5f6368" ;;
+    *)      printf '%s' "#000000" ;;
+  esac
+}
+
+outcome_text() {
+  case "$1" in
+    ok)               printf '%s' "ok" ;;
+    failed)           printf '%s' "failed" ;;
+    no_tickets|no_prs) printf '%s' "idle" ;;
+    *)                printf '%s' "$1" ;;
+  esac
+}
+
+render_status() {
+  local json="$HOME/ralph-status.json"
+  local html="$HOME/ralph-status.html"
+  if [ ! -f "$json" ]; then return 0; fi
+
+  local tmp; tmp="$(mktemp)"
+  jq -r '
+    ["engineer", "reviewer"][] as $leg |
+    [ .legs[$leg].iterations | to_entries[] |
+      {repo: .key, last_tick: .value.last_tick, outcome: .value.outcome, tier: .value.tier, ticket: .value.ticket, detail: .value.detail}
+    ] | sort_by(.last_tick // "") | last // {} |
+    [ $leg, .repo // "", .last_tick // "", .outcome // "", (.tier|tostring), .ticket // "", .detail // "" ] |
+    join("\u0001")
+  ' "$json" 2>/dev/null > "$tmp" || { rm -f "$tmp"; return 0; }
+
+  {
+    printf '<!DOCTYPE html>\n'
+    printf '<html lang="en"><head>\n'
+    printf '<meta charset="utf-8">\n'
+    printf '<title>ralph-loop heartbeat</title>\n'
+    printf '<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:24px;color:#202124}table{border-collapse:collapse;width:100%%}th,td{border:1px solid #dadce0;padding:8px 12px;text-align:left}th{background:#f8f9fa;font-weight:600}.ticket{font-family:monospace;font-size:13px}caption{caption-side:top;text-align:left;font-weight:600;margin-bottom:12px;font-size:14px;color:#5f6368}#countdown{color:#5f6368;font-size:13px;margin-bottom:12px}</style>\n'
+    printf '<script>var t=15;function c(){document.getElementById("cd").textContent=t;if(t--<=0)location.reload();else setTimeout(c,1000)}</script>\n'
+    printf '</head><body onload="c()">\n'
+    printf '<table>\n'
+    printf '<caption>ralph-loop heartbeat &mdash; refresh in <span id="cd">15</span>s</caption>\n'
+    printf '<thead><tr><th>leg</th><th>board</th><th>next tick (ET)</th><th>ticket</th><th>status</th><th>detail</th><th>tier</th></tr></thead>\n'
+    printf '<tbody>\n'
+  } > "$html"
+
+  while IFS=$'\x01' read -r leg repo last_tick outcome tier ticket detail; do
+    [ -z "$leg" ] && continue
+    next_short=""
+    if [ -n "$last_tick" ]; then
+      ts="${last_tick%%.*}"; ts="${ts%Z}"
+      next_short=$(python3 -c "from datetime import*;from zoneinfo import*;t=datetime.fromisoformat('$ts');et=t.astimezone(ZoneInfo('America/New_York'))+timedelta(minutes=5);print(et.strftime('%H:%M%Z'))" 2>/dev/null || printf '%s' "$last_tick")
+    else
+      next_short="-"
+    fi
+    [ -z "$ticket" ] && ticket="-"
+    [ -z "$detail" ] && detail="-"
+    [ -z "$repo" ] && repo="-"
+    color=$(outcome_color "$outcome")
+    tier_label=$(tier_name "$tier")
+    outcome_label=$(outcome_text "$outcome")
+    printf '<tr><td>%s</td><td>%s</td><td>%s</td><td class="ticket">%s</td><td style="color:%s;font-weight:600">%s</td><td>%s</td><td>%s</td></tr>\n' \
+      "$leg" "$repo" "$next_short" "$ticket" "$color" "$outcome_label" "$detail" "$tier_label" >> "$html"
+  done < "$tmp"
+  rm -f "$tmp"
+
+  # Append recent activity from the loop logs
+  {
+    printf '</tbody>\n</table>\n'
+    printf '<h3 style="margin-top:24px;color:#5f6368;font-size:14px">Recent activity</h3>\n'
+    printf '<pre style="font-size:12px;background:#f8f9fa;padding:12px;border:1px solid #dadce0;border-radius:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto">\n'
+
+    # Tail 5 lines from each loop log with agent header
+    for logpair in "engineer-board.log:=== Engineer ===" "review-board.log:=== Reviewer ==="; do
+      logfile="$HOME/${logpair%%:*}"
+      header="${logpair##*:}"
+      [ -f "$logfile" ] && {
+        printf '%s\n' "$header"
+        tail -5 "$logfile" 2>/dev/null
+        printf '\n'
+      }
+    done | head -15
+
+    printf '</pre>\n'
+    printf '</body></html>\n'
+  } >> "$html"
+}
+
+render_status_for() {
+  local leg="$1" repo="$2" outcome="$3" tier="$4" ticket="${5:-}" detail="${6:-}"
+  local json="$HOME/ralph-status.json" ts
+  ts=$(date -u +%FT%TZ)
+  local base; [ -f "$json" ] && base=$(cat "$json") || base='{"legs":{}}'
+
+  local updated
+  updated=$(printf '%s' "$base" | jq \
+    --arg leg "$leg" --arg repo "$repo" --arg outcome "$outcome" \
+    --arg tier "$tier" --arg ts "$ts" --arg ticket "$ticket" --arg detail "$detail" \
+    '.legs[$leg].iterations[$repo] = {last_tick: $ts, outcome: $outcome, tier: ($tier|tonumber), ticket: $ticket, detail: $detail}')
+  printf '%s\n' "$updated" > "$json"
+  render_status
+}
+
+record_heartbeat() {
+  local leg="$1" repo="$2" result="$3" detail="${4:-}"
+  local outcome ticket=""
+
+  if [ -z "${result//[[:space:]]/}" ]; then
+    # Empty output: check if the exit code tells us more
+    if [[ "$detail" == "exit 0" ]]; then
+      outcome="no_tickets"  # Ran fine, nothing to do; render as idle
+    else
+      outcome="failed"
+    fi
+    [ -z "$detail" ] && detail="no output"
+  elif [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then
+    outcome="no_tickets"
+  elif [[ "$result" == *"<promise>NO_PRS</promise>"* ]]; then
+    outcome="no_prs"
+  else
+    outcome="ok"
+  fi
+
+  # Extract ticket identifier from output — only relevant when work actually happened
+  local ticket_match=""
+  if [ "$outcome" = "ok" ]; then
+    ticket_match=$(printf '%s' "$result" | grep -oP 'ENG-\d+|PR #\d+' 2>/dev/null | head -1)
+    [ -n "$ticket_match" ] && ticket="$ticket_match"
+  fi
+
+  # If detail not passed but we have a non-empty result and outcome is ok, extract first line as detail
+  if [ -z "$detail" ] && [ -n "$result" ] && [ "$outcome" = "ok" ]; then
+    detail=$(printf '%s' "$result" | head -1 | tr -d '\n' | head -c 80)
+  fi
+
+  local tier="${RALPH_DISPATCH_TIER:-0}"
+  render_status_for "$leg" "$repo" "$outcome" "$tier" "$ticket" "$detail"
+
+  # Append to the daily log (one-per-line timestamped history)
+  local logfile="$HOME/ralph-status.log"
+  local logts
+  logts=$(date -u +%FT%TZ)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$logts" "$leg" "$repo" "$outcome" "$ticket" "$detail" "$tier" >> "$logfile"
+}
+
+if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
+  if [ "$#" -lt 4 ]; then
+    echo "usage: ralph-status <leg> <repo> <outcome> <tier> [ticket [detail]]" >&2
+    exit 2
+  fi
+  render_status_for "$1" "$2" "$3" "$4" "${5:-}" "${6:-}"
+fi
