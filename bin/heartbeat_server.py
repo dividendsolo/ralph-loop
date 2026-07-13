@@ -287,16 +287,18 @@ pre, .log-pane{{font-size:12px;background:#f8f9fa;padding:12px;border:1px solid 
         self.wfile.write(html.encode())
 
     def do_POST(self):
-        # Reset acts only on a same-origin POST. A cross-site form POST
-        # carries an Origin header naming the attacker's site; our own
-        # confirm page's Origin matches the Host we were addressed by.
-        # curl and same-origin form posts pass; anything else is refused.
+        # Reset acts only on a same-origin POST: Origin (or Referer) must be
+        # present AND match the Host we were addressed by. The confirm form
+        # satisfies this; a cross-site POST names the attacker's origin and a
+        # header-stripped request is refused too. From curl, pass it
+        # explicitly: curl -X POST -H "Origin: http://<host>:8765" .../reset
         if self.path != "/reset":
             self.send_error(404)
             return
-        origin = self.headers.get("Origin")
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
         host = self.headers.get("Host", "")
-        if origin is not None and origin != f"http://{host}":
+        allowed = (f"http://{host}", f"https://{host}")
+        if not host or not (origin in allowed or origin.startswith(tuple(a + "/" for a in allowed))):
             self.send_error(403, "cross-origin reset refused")
             return
         self._do_reset()
