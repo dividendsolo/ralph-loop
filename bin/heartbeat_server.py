@@ -40,20 +40,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         now_utc = datetime.now(timezone.utc)
         now_et = now_utc.astimezone(ET)
 
-        # /reset endpoint: kill everything, clear locks. Now that the server
-        # is tailnet-exposed (not localhost-only), a bare GET /reset must not
-        # act — browser URL-bar prefetch would nuke the loop. Require the
-        # explicit confirm param; plain /reset shows a confirm link instead.
-        if self.path == "/reset?confirm=1":
-            self._do_reset()
-            return
-        if self.path == "/reset":
+        # /reset: kill everything, clear locks. Tailnet-exposed, so GET never
+        # acts (URL prefetch, cross-site <img>). The confirm page submits a
+        # same-origin POST; do_POST enforces the Origin check.
+        if self.path.startswith("/reset"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(b"<html><body><h2>Reset the loop?</h2>"
                 b"<p>Kills all Hermes sessions, clears locks and rate-limit files.</p>"
-                b"<p><a href='/reset?confirm=1'>Yes, reset</a> &middot; <a href='/'>Back to dashboard</a></p>"
+                b"<form method='POST' action='/reset'><button type='submit'>Yes, reset</button></form>"
+                b"<p><a href='/'>Back to dashboard</a></p>"
                 b"</body></html>")
             return
 
@@ -288,6 +285,23 @@ pre, .log-pane{{font-size:12px;background:#f8f9fa;padding:12px;border:1px solid 
 <div id="footer">refresh in <span id="cd">15</span>s &mdash; Generated: {now_et.strftime('%H:%M:%S %Z')}</div>
 </body></html>"""
         self.wfile.write(html.encode())
+
+    def do_POST(self):
+        # Reset acts only on a same-origin POST: Origin (or Referer) must be
+        # present AND match the Host we were addressed by. The confirm form
+        # satisfies this; a cross-site POST names the attacker's origin and a
+        # header-stripped request is refused too. From curl, pass it
+        # explicitly: curl -X POST -H "Origin: http://<host>:8765" .../reset
+        if self.path != "/reset":
+            self.send_error(404)
+            return
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        host = self.headers.get("Host", "")
+        allowed = (f"http://{host}", f"https://{host}")
+        if not host or not (origin in allowed or origin.startswith(tuple(a + "/" for a in allowed))):
+            self.send_error(403, "cross-origin reset refused")
+            return
+        self._do_reset()
 
     def _do_reset(self):
         """Kill all Hermes sessions, clear locks and rate-limit files."""
