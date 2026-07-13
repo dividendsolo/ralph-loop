@@ -1,0 +1,297 @@
+#!/bin/bash
+# ralph-status: heartbeat recorder + renderer for the ralph loop (ENG-119).
+#
+# Every loop iteration (engineer / reviewer) calls `ralph-status record` with
+# the (leg, repo, outcome) tuple of that iteration. The recorder writes a
+# single canonical JSON to $HOME/ralph-status.json, last-writer-wins. A
+# systemd-supervised static server (`systemd/ralph-status.service`) serves
+# the rendered HTML on port 8765, reachable from the operator's Tailscale
+# tailnet.
+#
+# Subcommands:
+#   record  --leg <engineer|reviewer> --repo <basename> --repo-path <path>
+#            --outcome <ok|failed|no_tickets|no_prs>
+#            (--outcome defaults to "ok" if omitted)
+#   render  write $HOME/ralph-status.html from the current JSON
+#   show    print the current JSON to stdout (smoke test)
+#
+# Tier detection is state-file based per the card: presence of
+# $HOME/.{work|review}-rate-limited means the dispatcher fell back to
+# Hermes/MiniMax-M3; absence means primary (Opus 4.8). The loops clear the
+# state file at the start of every tick, so the page self-heals within one
+# tick of the rate limit lifting.
+#
+# Scope:
+#   engineer iterates skills + rep-sheet (per bin/engineer-board).
+#   reviewer iterates every repo registered in $HOME/.claude/afk.json.
+#   The recorder ONLY writes cells for repos the loop actually visits, so
+#   the page shrinks / grows naturally when the scope filter changes.
+#
+# Both loops write to the same JSON; last writer wins. Trivially idempotent.
+
+set -euo pipefail
+
+HOME="${HOME:-$HOME}"
+AFK="${AFK:-$HOME/.claude/afk.json}"
+JSON="$HOME/ralph-status.json"
+HTML="$HOME/ralph-status.html"
+
+# Cron interval (minutes). next_tick = last_tick + this many minutes.
+CRON_INTERVAL_MIN=5
+
+# --- helpers -----------------------------------------------------------------
+
+now_utc() {
+  # ISO-8601 UTC, seconds precision (e.g. 2026-07-13T17:25:00Z). Stable shape
+  # so jq + Python can both parse it.
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+iso_to_epoch() {
+  python3 -c "
+from datetime import datetime
+import sys
+print(int(datetime.fromisoformat(sys.argv[1].replace('Z','+00:00')).timestamp()))
+" "$1"
+}
+
+epoch_to_iso() {
+  python3 -c "
+from datetime import datetime, timezone
+import sys
+print(datetime.fromtimestamp(int(sys.argv[1]), timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+" "$1"
+}
+
+tier_for_leg() {
+  # The dispatcher writes ~/.{leg_short}-rate-limited when it falls back.
+  # Presence (regardless of content) = fallback tier; absence = primary.
+  local leg="$1"
+  local short
+  case "$leg" in
+    engineer) short="work" ;;
+    reviewer) short="review" ;;
+    *)        short="" ;;
+  esac
+  if [ -n "$short" ] && [ -f "$HOME/.${short}-rate-limited" ]; then
+    echo "Hermes/MiniMax-M3"
+  else
+    echo "Opus 4.8"
+  fi
+}
+
+scope_for_leg() {
+  # Engineer: skills + rep-sheet (the operator-pinned worker scope).
+  # Reviewer: every repo basename in afk.json (the reviewer iterates all).
+  local leg="$1"
+  case "$leg" in
+    engineer) echo "skills rep-sheet" ;;
+    reviewer)
+      if [ -f "$AFK" ]; then
+        jq -r '.repos | keys[] | split("/")[-1]' "$AFK" | tr '\n' ' '
+      else
+        echo ""
+      fi
+      ;;
+    *) echo "" ;;
+  esac
+}
+
+ensure_json() {
+  # Initialize the JSON file with an empty cells map if it does not yet
+  # exist. last-writer-wins semantics: every record() rewrites the cell, so
+  # stale cells from a different repo never linger (a leg that hasn't
+  # visited a repo in N ticks just keeps its last known tick + outcome).
+  if [ ! -f "$JSON" ]; then
+    mkdir -p "$(dirname "$JSON")"
+    printf '{"cells":{}}\n' > "$JSON"
+  fi
+}
+
+# --- subcommands -------------------------------------------------------------
+
+record() {
+  # Parse flags. Defaults: outcome=ok, tier=state-file-derived, repo=required,
+  # leg=required.
+  local leg="" repo="" repo_path="" outcome="ok" tier_override=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --leg)       leg="$2"; shift 2 ;;
+      --repo)      repo="$2"; shift 2 ;;
+      --repo-path) repo_path="$2"; shift 2 ;;
+      --outcome)   outcome="$2"; shift 2 ;;
+      --tier)      tier_override="$2"; shift 2 ;;
+      *) echo "ralph-status: unknown arg '$1'" >&2; return 2 ;;
+    esac
+  done
+
+  [ -n "$leg" ]  || { echo "ralph-status: --leg required" >&2; return 2; }
+  [ -n "$repo" ] || { echo "ralph-status: --repo required" >&2; return 2; }
+
+  local tick
+  tick=$(now_utc)
+  local epoch
+  epoch=$(iso_to_epoch "$tick")
+  local next_epoch=$(( epoch + CRON_INTERVAL_MIN * 60 ))
+  local next_tick
+  next_tick=$(epoch_to_iso "$next_epoch")
+
+  local tier
+  if [ -n "$tier_override" ]; then
+    tier="$tier_override"
+  else
+    tier=$(tier_for_leg "$leg")
+  fi
+
+  ensure_json
+
+  # Merge this (leg, repo, tick, next, outcome, tier) into the cells map.
+  # - jq reads JSON, slop -e so missing file errors out cleanly.
+  # - The (.cells // {}) default lets us operate on a fresh empty file.
+  tmp="$(mktemp)"
+  jq --arg leg "$leg" \
+     --arg repo "$repo" \
+     --arg repo_path "$repo_path" \
+     --arg tick "$tick" \
+     --arg next "$next_tick" \
+     --arg outcome "$outcome" \
+     --arg tier "$tier" \
+     '.cells[$leg][$repo] = {
+        repo_path: $repo_path,
+        last_tick: $tick,
+        next_tick: $next,
+        outcome:   $outcome,
+        tier:      $tier
+      }' "$JSON" > "$tmp" && mv "$tmp" "$JSON"
+}
+
+render() {
+  ensure_json
+  # Build the page from cells; iterate (leg, repo) sorted so output is
+  # stable across runs and easy to grep / diff in tests.
+  python3 - "$JSON" "$HTML" <<'PY'
+import json, sys
+from pathlib import Path
+json_path, html_path = Path(sys.argv[1]), Path(sys.argv[2])
+
+data = json.loads(json_path.read_text())
+cells = data.get("cells", {})
+
+OUTCOME_COLOR = {
+    "ok":          "green",
+    "failed":      "red",
+    "no_tickets":  "gray",
+    "no_prs":      "gray",
+}
+
+def esc(s):
+    return (str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+# Stable iteration order: legs then repos alphabetical.
+rows = []
+for leg in sorted(cells):
+    for repo in sorted(cells[leg]):
+        c = cells[leg][repo]
+        rows.append((leg, repo, c))
+
+# Build the HTML. Trivially hand-rolled; no CSS framework, no JS.
+parts = []
+parts.append('<!doctype html>')
+parts.append('<html lang="en"><head>')
+parts.append('<meta charset="utf-8">')
+parts.append('<meta http-equiv="refresh" content="60">')
+parts.append('<title>ralph-loop heartbeat</title>')
+parts.append('<style>')
+parts.append('  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 24px; color: #222; }')
+parts.append('  h1 { font-size: 18px; margin: 0 0 16px; }')
+parts.append('  table { border-collapse: collapse; width: 100%; max-width: 720px; }')
+parts.append('  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 14px; }')
+parts.append('  th { background: #fafafa; font-weight: 600; }')
+parts.append('  .ok          { color: #1a7f37; }')
+parts.append('  .failed      { color: #cf222e; font-weight: 600; }')
+parts.append('  .no_tickets, .no_prs { color: #888; }')
+parts.append('</style></head><body>')
+parts.append('<h1>ralph-loop heartbeat</h1>')
+parts.append('<table><thead><tr>')
+for h in ("leg", "repo", "last tick", "next tick", "outcome", "tier"):
+    parts.append(f'<th>{h}</th>')
+parts.append('</tr></thead><tbody>')
+for leg, repo, c in rows:
+    outcome = c.get("outcome", "")
+    klass = OUTCOME_COLOR.get(outcome, "")
+    parts.append('<tr>')
+    parts.append(f'<td>{esc(leg)}</td>')
+    parts.append(f'<td>{esc(repo)}</td>')
+    parts.append(f'<td>{esc(c.get("last_tick",""))}</td>')
+    parts.append(f'<td>{esc(c.get("next_tick",""))}</td>')
+    parts.append(f'<td class="{klass}">{esc(outcome)}</td>')
+    parts.append(f'<td>{esc(c.get("tier",""))}</td>')
+    parts.append('</tr>')
+parts.append('</tbody></table>')
+parts.append('</body></html>')
+
+html_path.write_text("\n".join(parts) + "\n")
+PY
+}
+
+show() {
+  ensure_json
+  cat "$JSON"
+}
+
+# Sourceable helper for the loops (ENG-119). Each loop calls this once
+# per iteration with (leg, repo, repo-path, outcome); the helper derives
+# the tier from the dispatcher's rate-limit state file (presence =
+# fallback, absence = primary), then delegates to the recorder CLI so
+# the JSON + page stay canonical. Falls back to a no-op (just renders the
+# existing JSON) if `ralph-status` is missing so old boxes without the
+# recorder still keep the page live.
+#
+# Usage: record_heartbeat <leg> <repo> <repo-path> <outcome>
+record_heartbeat() {
+  local leg="$1" repo="$2" repo_path="$3" outcome="$4"
+  local here
+  here="$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}")")"
+  if [ ! -x "$here/ralph-status" ]; then
+    # No recorder on disk; nothing to record. The page stays frozen at its
+    # last good state, which is better than failing the iteration.
+    return 0
+  fi
+  "$here/ralph-status" record \
+    --leg "$leg" \
+    --repo "$repo" \
+    --repo-path "$repo_path" \
+    --outcome "$outcome" >/dev/null 2>&1 || true
+  "$here/ralph-status" render >/dev/null 2>&1 || true
+}
+
+# --- entrypoint --------------------------------------------------------------
+#
+# Only run the dispatcher logic when invoked as a CLI (BASH_SOURCE[0] == $0).
+# When sourced by engineer-ralph / review-ralph to get the record_heartbeat
+# helper, BASH_SOURCE[0] is the caller's file (different from $0) so the
+# block is skipped, same pattern ralph-dispatch uses.
+
+if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
+  case "${1:-}" in
+    record) shift; record "$@" ;;
+    render) shift; render "$@" ;;
+    show)   shift; show "$@" ;;
+    -h|--help|help|"")
+      cat <<EOF
+ralph-status: heartbeat recorder + renderer (ENG-119)
+Usage:
+  ralph-status record --leg <e|r> --repo <basename> [--outcome <ok|failed|no_tickets|no_prs>]
+  ralph-status render
+  ralph-status show
+EOF
+      ;;
+    *)
+      echo "ralph-status: unknown subcommand '$1' (expected: record|render|show)" >&2
+      exit 2
+      ;;
+  esac
+fi

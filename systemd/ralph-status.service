@@ -1,0 +1,22 @@
+[Unit]
+Description=ralph-loop heartbeat (static dashboard, port 8765)
+Documentation=https://github.com/dividendsolo/ralph-loop
+# No After= dependency on the ralph loops: this unit serves whatever
+# $HOME/ralph-status.html happens to be on disk. If the loops have not
+# written one yet, the page renders the empty-cells message instead of
+# failing to start.
+
+[Service]
+Type=simple
+# `python3 -m http.server` is the no-framework server per the card.
+# The card explicitly rejects a JS or CSS framework.
+WorkingDirectory=%h
+ExecStart=/usr/bin/python3 -m http.server 8765 --bind 0.0.0.0
+Restart=on-failure
+RestartSec=5
+# Allow the operator to inspect / stop the service without sudo.
+StandardOutput=append:%h/ralph-status-server.log
+StandardError=append:%h/ralph-status-server.log
+
+[Install]
+WantedBy=default.target

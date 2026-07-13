@@ -38,8 +38,12 @@ PROMPT="Use the reviewer skill to review EXACTLY ONE In Review PR on this repo's
 # run from anywhere picks up the helper too.
 # shellcheck source=ralph-dispatch
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
+# Source the heartbeat recorder (ENG-119).
+# shellcheck source=ralph-status
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-status"
 
 cd "$REPO" || { echo "review-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
+REPO_BASENAME="$(basename "$REPO")"
 
 # Mirror banners + agent output to the persistent log as well as the terminal.
 log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
@@ -88,6 +92,18 @@ for ((i=1; i<=N; i++)); do
   fi
 
   log "$result"
+
+  # Heartbeat (ENG-119): record the outcome for THIS iteration so the
+  # dashboard page shows last-tick + tier + outcome per (leg, repo).
+  # Outcome taxonomy: ok (a real review ran), no_prs (queue clear),
+  # failed (dispatch fell back to Hermes on rate-limit cascade).
+  outcome="ok"
+  if [[ "$result" == *"<promise>NO_PRS</promise>"* ]]; then
+    outcome="no_prs"
+  elif [[ "$result" == *"===== FALLBACK ====="* ]] || [[ "$result" == *"weekly limit"* ]]; then
+    outcome="failed"
+  fi
+  record_heartbeat reviewer "$REPO_BASENAME" "$REPO" "$outcome" || true
 
   if [[ "$result" == *"<promise>NO_PRS</promise>"* ]]; then
     log "===== review queue clear: no eligible PRs after $i iteration(s). ====="

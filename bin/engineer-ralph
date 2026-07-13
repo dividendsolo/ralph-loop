@@ -45,8 +45,14 @@ PROMPT="Use the engineer skill to pick up and carry EXACTLY ONE ticket forward o
 # Hermes/MiniMax-M3 if the primary refuses with the Anthropic weekly rate limit.
 # shellcheck source=ralph-dispatch
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
+# Source the heartbeat recorder (ENG-119). record_heartbeat is a no-op if
+# the recorder is missing so the loop keeps running on old boxes that
+# haven't pulled this update yet.
+# shellcheck source=ralph-status
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-status"
 
 cd "$REPO" || { echo "engineer-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
+REPO_BASENAME="$(basename "$REPO")"
 
 # Mirror banners + hermes output to the persistent log as well as the terminal.
 log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
@@ -79,9 +85,12 @@ for ((i=1; i<=N; i++)); do
     rc=$?
     result="$RALPH_DISPATCH_OUTPUT"
 
-    # Extract ticket from output and write to live status file for dashboard
-    local ticket_id
-    ticket_id=$(printf '%s' "$result" | grep -oP 'ENG-\d+' 2>/dev/null | head -1)
+    # Extract ticket from output and write to live status file for dashboard.
+    # NOTE: `ticket_id` is script-scoped, NOT function-scoped; `local` here
+    # would fail with `local: can only be used in a function` (silent because
+    # the for loop body is not a function), and ticket extraction would break
+    # without an error to grep. Keep it plain.
+    ticket_id=$(printf '%s' "$result" | grep -oP 'ENG-\d+' 2>/dev/null | head -1 || true)
     [ -n "$ticket_id" ] && printf '%s\n' "$ticket_id" > "$HOME/.engineer-current-ticket"
     # Success is judged by OUTPUT, not exit code. hermes -z exits non-zero even
     # on a fully successful ticket (git/PR/hook activity during teardown), so the
@@ -91,7 +100,7 @@ for ((i=1; i<=N; i++)); do
       break
     fi
     log "----- iteration $i attempt $attempt produced NO output (dispatch exit $rc) — likely a startup crash -----"
-    if [ "$attempt" = 1 ]; then
+    if [ "$attempt" = "1" ]; then
       log "retrying in 15s..."
       sleep 15
     fi
@@ -107,6 +116,18 @@ for ((i=1; i<=N; i++)); do
   if [ "$rc" -ne 0 ]; then
     log "(note: dispatch exit $rc on a ticket that produced output — expected; success judged by output, not exit code.)"
   fi
+
+  # Heartbeat (ENG-119): record the outcome for THIS iteration so the
+  # dashboard page shows last-tick + tier + outcome per (leg, repo).
+  # Outcome taxonomy: ok (a real iteration ran), no_tickets (board clear),
+  # failed (dispatch fell back to Hermes on rate-limit cascade).
+  outcome="ok"
+  if [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then
+    outcome="no_tickets"
+  elif [[ "$result" == *"===== FALLBACK ====="* ]] || [[ "$result" == *"weekly limit"* ]]; then
+    outcome="failed"
+  fi
+  record_heartbeat engineer "$REPO_BASENAME" "$REPO" "$outcome" || true
 
   if [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then
     log "===== board clear: no eligible tickets after $i iteration(s). ====="
