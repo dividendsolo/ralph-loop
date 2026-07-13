@@ -1,7 +1,8 @@
-# ralph-status.service - static-file server for the ralph-loop heartbeat page.
+# ralph-status.service - live heartbeat server for the ralph loop.
 #
-# Binds python3 -m http.server on port 8765 from $HOME so the operator's
-# browser can fetch ~/ralph-status.html (and ~/ralph-status.json) directly.
+# Runs bin/heartbeat_server.py on port 8765: renders the dashboard on each
+# request (live sessions, last/next tick, tickets, log tails) from
+# ~/ralph-status.json and the leg logs.
 # Reachable from any device on the operator's Tailscale tailnet; auth lives
 # at the Tailscale layer, not in this service.
 #
@@ -28,17 +29,17 @@
 #
 # Browse from a tailnet device:
 #
-#   http://<100.x.x.x>:8765/ralph-status.html
+#   http://<100.x.x.x>:8765/
 
 [Unit]
-Description=Ralph loop heartbeat (static http server)
+Description=Ralph loop heartbeat (live dashboard server)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=%h
-ExecStart=/usr/bin/env python3 -m http.server 8765 --bind 0.0.0.0
+ExecStart=/usr/bin/env python3 %h/code/ralph-loop/bin/heartbeat_server.py
 StandardOutput=append:%h/ralph-status-server.log
 StandardError=append:%h/ralph-status-server.log
 Restart=on-failure

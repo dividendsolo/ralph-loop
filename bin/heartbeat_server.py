@@ -40,9 +40,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         now_utc = datetime.now(timezone.utc)
         now_et = now_utc.astimezone(ET)
 
-        # /reset endpoint: kill everything, clear locks
-        if self.path == "/reset":
+        # /reset endpoint: kill everything, clear locks. Now that the server
+        # is tailnet-exposed (not localhost-only), a bare GET /reset must not
+        # act — browser URL-bar prefetch would nuke the loop. Require the
+        # explicit confirm param; plain /reset shows a confirm link instead.
+        if self.path == "/reset?confirm=1":
             self._do_reset()
+            return
+        if self.path == "/reset":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"<html><body><h2>Reset the loop?</h2>"
+                b"<p>Kills all Hermes sessions, clears locks and rate-limit files.</p>"
+                b"<p><a href='/reset?confirm=1'>Yes, reset</a> &middot; <a href='/'>Back to dashboard</a></p>"
+                b"</body></html>")
             return
 
         self.send_response(200)
@@ -306,5 +318,8 @@ pre, .log-pane{{font-size:12px;background:#f8f9fa;padding:12px;border:1px solid 
         self.wfile.write(f"<html><body><h2>{msg}</h2><p><a href='/'>Back to dashboard</a></body></html>".encode())
 
 if __name__ == "__main__":
-    port = 8081
-    http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    # Served by systemd/ralph-status.service on the tailnet; auth lives at
+    # the Tailscale layer. PORT/BIND env for tests and local runs.
+    port = int(os.environ.get("PORT", "8765"))
+    bind = os.environ.get("BIND", "0.0.0.0")
+    http.server.HTTPServer((bind, port), Handler).serve_forever()
