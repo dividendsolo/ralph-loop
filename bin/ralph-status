@@ -7,7 +7,7 @@
 #   leg     worker | reviewer
 #   repo    basename of the repo (e.g. skills, docket)
 #   outcome ok | failed | idle
-#   tier    0 (Hermes/MiniMax-M3) | 1 (Sonnet 5) | 2 (Hermes/MiniMax-M3)
+#   tier    0 (Opus 4.8) | 1 (Sonnet 5) | 2 (Hermes/MiniMax-M3)
 #   ticket  ticket/PR identifier (e.g. ENG-119, PR #8)
 #   detail  failure reason or verbose context
 #
@@ -21,7 +21,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 tier_name() {
   case "$1" in
-    0) printf '%s' "Hermes/MiniMax-M3" ;;
+    0) printf '%s' "Opus 4.8" ;;
     1) printf '%s' "Sonnet 5" ;;
     2) printf '%s' "Hermes/MiniMax-M3" ;;
     *) printf '%s' "tier $1" ;;
@@ -41,7 +41,8 @@ outcome_text() {
   case "$1" in
     ok)               printf '%s' "ok" ;;
     failed)           printf '%s' "failed" ;;
-    no_tickets|no_prs) printf '%s' "idle" ;;
+    no_tickets)       printf '%s' "no tickets" ;;
+    no_prs)           printf '%s' "no PRs" ;;
     *)                printf '%s' "$1" ;;
   esac
 }
@@ -52,19 +53,24 @@ render_status() {
   if [ ! -f "$json" ]; then return 0; fi
 
   local tmp; tmp="$(mktemp)"
+  # Read the leg list from the JSON (any key under .legs), not a hardcoded
+  # array. The integration test writes leg=worker; live loops use engineer /
+  # reviewer; either path needs to surface in the rendered table. See ENG-181
+  # for the original split and the test loop that surfaced it.
+  # Emit one row per (leg, repo) cell, ordered most-recent-tick first so the
+  # operator's eye lands on the freshest activity without having to scroll.
   jq -r '
-    ["engineer", "reviewer"][] as $leg |
-    [ .legs[$leg].iterations | to_entries[] |
-      {repo: .key, last_tick: .value.last_tick, outcome: .value.outcome, tier: .value.tier, ticket: .value.ticket, detail: .value.detail}
-    ] | sort_by(.last_tick // "") | last // {} |
-    [ $leg, .repo // "", .last_tick // "", .outcome // "", (.tier|tostring), .ticket // "", .detail // "" ] |
-    join("\u0001")
-  ' "$json" 2>/dev/null > "$tmp" || { rm -f "$tmp"; return 0; }
+    .legs | to_entries[] | .key as $leg |
+    .value.iterations | to_entries[] |
+    [ $leg, .key, .value.last_tick // "", .value.outcome // "", (.value.tier|tostring), .value.ticket // "", .value.detail // "" ] |
+    join("")
+  ' "$json" 2>/dev/null | sort -t $'\x01' -k3 -r > "$tmp" || { rm -f "$tmp"; return 0; }
 
   {
     printf '<!DOCTYPE html>\n'
     printf '<html lang="en"><head>\n'
     printf '<meta charset="utf-8">\n'
+    printf '<meta http-equiv="refresh" content="60">\n'
     printf '<title>ralph-loop heartbeat</title>\n'
     printf '<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:24px;color:#202124}table{border-collapse:collapse;width:100%%}th,td{border:1px solid #dadce0;padding:8px 12px;text-align:left}th{background:#f8f9fa;font-weight:600}.ticket{font-family:monospace;font-size:13px}caption{caption-side:top;text-align:left;font-weight:600;margin-bottom:12px;font-size:14px;color:#5f6368}#countdown{color:#5f6368;font-size:13px;margin-bottom:12px}</style>\n'
     printf '<script>var t=15;function c(){document.getElementById("cd").textContent=t;if(t--<=0)location.reload();else setTimeout(c,1000)}</script>\n'
@@ -152,7 +158,7 @@ record_heartbeat() {
     outcome="ok"
   fi
 
-  # Extract ticket identifier from output — only relevant when work actually happened
+  # Extract ticket identifier from output; only relevant when work actually happened
   local ticket_match=""
   if [ "$outcome" = "ok" ]; then
     ticket_match=$(printf '%s' "$result" | grep -oP 'ENG-\d+|PR #\d+' 2>/dev/null | head -1)

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 HOME = os.environ.get("HOME", "/home/div")
 ET = ZoneInfo("America/New_York")
-TIER_NAMES = {0: "Hermes/MiniMax-M3", 1: "Sonnet 5", 2: "Hermes/MiniMax-M3"}
+TIER_NAMES = {0: "Opus 4.8", 1: "Sonnet 5", 2: "Hermes/MiniMax-M3"}
 
 def tail_file(path, n=8):
     try:
@@ -215,7 +215,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         # Rule 1: more than 2 concurrent Heremes sessions is always wrong
         if len(sessions) > 2:
-            warnings.append(f"⚠️ <b>{len(sessions)} concurrent sessions</b> — should be at most 2 (engineer + reviewer)")
+            warnings.append(f"⚠️ <b>{len(sessions)} concurrent sessions</b>; should be at most 2 (engineer + reviewer)")
 
         # Rule 2: any session running >5min is stuck
         for s in sessions:
@@ -225,7 +225,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     mins = int(e.split(":")[0])
                     if mins >= 5:
                         stale_count += 1
-                        warnings.append(f"⚠️ <b>{s['leg']}</b> PID {s['pid']} running {e} — stuck {mins}min")
+                        warnings.append(f"⚠️ <b>{s['leg']}</b> PID {s['pid']} running {e}; stuck {mins}min")
                 except: pass
         for lock_name in [".engineer-board.lock", ".review-board.lock"]:
             lock_path = os.path.join(HOME, lock_name)
