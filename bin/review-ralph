@@ -38,6 +38,8 @@ PROMPT="Use the reviewer skill to review EXACTLY ONE In Review PR on this repo's
 # run from anywhere picks up the helper too.
 # shellcheck source=ralph-dispatch
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
+# shellcheck source=ralph-status
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-status"
 
 cd "$REPO" || { echo "review-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
@@ -88,6 +90,9 @@ for ((i=1; i<=N; i++)); do
   fi
 
   log "$result"
+  # Record the heartbeat for the dashboard before checking for the NO_PRS
+  # token, so an iteration that reviewed a PR still gets the cell stamped.
+  record_heartbeat reviewer "$(basename "$REPO")" "$result" "exit $rc"
 
   if [[ "$result" == *"<promise>NO_PRS</promise>"* ]]; then
     log "===== review queue clear: no eligible PRs after $i iteration(s). ====="

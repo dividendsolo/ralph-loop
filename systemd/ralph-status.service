@@ -1,0 +1,48 @@
+# ralph-status.service - static-file server for the ralph-loop heartbeat page.
+#
+# Binds python3 -m http.server on port 8765 from $HOME so the operator's
+# browser can fetch ~/ralph-status.html (and ~/ralph-status.json) directly.
+# Reachable from any device on the operator's Tailscale tailnet; auth lives
+# at the Tailscale layer, not in this service.
+#
+# Install (one-time, per box):
+#
+#   USER_SYSTEMD_DIR="$HOME/.config/systemd/user"
+#   mkdir -p "$USER_SYSTEMD_DIR"
+#   cp systemd/ralph-status.service "$USER_SYSTEMD_DIR/"
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ralph-status.service
+#
+# Then enable lingering so the user unit survives logout:
+#
+#   sudo loginctl enable-linger "$USER"
+#
+# Uninstall:
+#
+#   systemctl --user disable --now ralph-status.service
+#   rm "$USER_SYSTEMD_DIR/ralph-status.service"
+#
+# Tail the log:
+#
+#   tail -F ~/ralph-status-server.log
+#
+# Browse from a tailnet device:
+#
+#   http://<100.x.x.x>:8765/ralph-status.html
+
+[Unit]
+Description=Ralph loop heartbeat (static http server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=/usr/bin/env python3 -m http.server 8765 --bind 0.0.0.0
+StandardOutput=append:%h/ralph-status-server.log
+StandardError=append:%h/ralph-status-server.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
