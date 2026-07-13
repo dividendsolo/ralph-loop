@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/test-iteration-order.sh — assert that bin/work-board and bin/review-board
+# tests/test-iteration-order.sh -- assert that bin/engineer-board and bin/review-board
 # enumerate their target repos in the operator-pinned priority order:
 #   skills > rep-sheet > docket.
 #
@@ -46,6 +46,6 @@ assert_priority_order() {
   echo "OK: $label = ${actual_arr[*]}"
 }
 
-assert_priority_order "work-board"   "$REPO_ROOT/bin/work-board"   skills rep-sheet
-assert_priority_order "review-board" "$REPO_ROOT/bin/review-board" skills rep-sheet docket
+assert_priority_order "engineer-board" "$REPO_ROOT/bin/engineer-board" skills rep-sheet
+assert_priority_order "review-board"   "$REPO_ROOT/bin/review-board"   skills rep-sheet docket
 echo "PASS: both scripts enumerate repos in priority order"

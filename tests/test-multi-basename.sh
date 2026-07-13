@@ -1,7 +1,7 @@
 #!/bin/bash
-# tests/test-multi-basename.sh — regression for ENG-126 B1.
+# tests/test-multi-basename.sh -- regression for ENG-126 B1.
 #
-# Bug: bin/work-board and bin/review-board captured jq's multi-line output into
+# Bug: bin/engineer-board and bin/review-board captured jq's multi-line output into
 # a scalar (REPO=$(jq ...)). When the afk.json had two repos whose basename
 # matched the iteration name (e.g., two checkouts both ending in /skills), jq
 # returned BOTH paths newline-joined; the scalar held the whole blob; the
@@ -82,7 +82,7 @@ env -i \
   PATH="$FAKE_HOME/bin-stubs:$PATH" \
   TMP_VISIT_LOG="$LOG" \
   WORK_ITERS=1 \
-  bash "$REPO_ROOT/bin/work-board"
+  bash "$REPO_ROOT/bin/engineer-board"
 
 env -i \
   HOME="$FAKE_HOME" \
@@ -104,4 +104,4 @@ for name in skills rep-sheet; do
   done
 done
 
-echo "PASS: both work-board and review-board visit every matching repo, not just the first"
+echo "PASS: both engineer-board and review-board visit every matching repo, not just the first"

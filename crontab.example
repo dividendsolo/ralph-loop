@@ -3,11 +3,11 @@
 # Appends to ~/review-board.log. SHADOW mode by default (no auto-merge).
 13,43 * * * * /home/div/.local/bin/review-board
 
-# Ralph worker: autonomous pickup, SCOPED TO REP-SHEET + SKILLS (work-board's jq filter).
-# Runs at :00 and :30. Appends to ~/work-board.log. Every Ready-for-Agent or
-# Changes-Requested card on rep-sheet or skills is a live trigger; widen the jq filter
-# or slow the schedule as needed.
-0,30 * * * * /home/div/.local/bin/work-board
+# Ralph worker: autonomous pickup, SCOPED TO REP-SHEET + SKILLS (engineer-board's jq filter).
+# Runs at :00 and :30. Appends to ~/engineer-board.log. Every Ready-for-Agent or
+# Changes-Requested card on either becomes a live trigger. Widen by relaxing the jq
+# filter (or drop it entirely to iterate every repo, like review-board).
+0,30 * * * * /home/div/.local/bin/engineer-board
 
 # Per-profile Linear token refresh (ENG-133).
 # Iterates every `hermes-<repo>` wrapper on PATH and refreshes each profile's
