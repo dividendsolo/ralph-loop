@@ -53,6 +53,14 @@ PROMPT="Use the engineer skill to pick up and carry EXACTLY ONE ticket forward o
 
 cd "$REPO" || { echo "engineer-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
+# Resolve the per-repo profile wrapper for dispatch. The dispatcher will use
+# `hermes-<repo>` when the box has the wrapper on PATH (post-ENG-133 human
+# setup) and fall back to bare `hermes` until then. Setting RALPH_REPO_NAME
+# here lets ralph-dispatch pick the right command without the legs having
+# to know how profiles are wired.
+RALPH_REPO_NAME="$(basename "$REPO")"
+export RALPH_REPO_NAME
+
 # Mirror banners + hermes output to the persistent log as well as the terminal.
 log() { printf '%s\n' "$*" | tee -a "$RALPH_LOG"; }
 

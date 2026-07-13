@@ -8,3 +8,10 @@
 # Changes-Requested card on rep-sheet or skills is a live trigger; widen the jq filter
 # or slow the schedule as needed.
 0,30 * * * * /home/div/.local/bin/work-board
+
+# Per-profile Linear token refresh (ENG-133).
+# Iterates every `hermes-<repo>` wrapper on PATH and refreshes each profile's
+# Linear MCP token. Replaces the single-profile refresh cron entry once the
+# per-repo profiles exist on the box; until then the wrapper logs "skipped"
+# for each missing profile and exits 0 (steady state, not a failure).
+0 */6 * * * /home/div/.local/bin/refresh-profile-tokens.sh >> /home/div/linear-refresh.log 2>&1
