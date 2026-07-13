@@ -12,6 +12,19 @@ HOME = os.environ.get("HOME", "/home/div")
 ET = ZoneInfo("America/New_York")
 TIER_NAMES = {0: "Opus 4.8", 1: "Sonnet 5", 2: "Hermes/MiniMax-M3"}
 
+# Match a live Hermes session line from `ps aux`. Catches both the bare
+# `hermes -z ...` shape and the post-exec wrapper shape `.../hermes -p <profile> -z ...`
+# introduced by per-profile dispatch (ENG-133). Excludes defunct/zombie lines,
+# the self-grep noise line, and unrelated processes. Anchored on the word
+# `hermes` (not the substring `hermes -z` which the wrapper hides behind
+# `-p <profile>`). Returns True iff the line represents a live agent session.
+_HERMES_SESSION_RE = re.compile(r"\bhermes\b(\s+-p\s+\S+)?\s+.*-z\s")
+
+def is_hermes_session_line(line: str) -> bool:
+    if not line or "defunct" in line or "grep" in line:
+        return False
+    return bool(_HERMES_SESSION_RE.search(line))
+
 def tail_file(path, n=8):
     try:
         with open(path) as f:
@@ -63,7 +76,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             out = subprocess.check_output(["ps", "aux"], timeout=5, text=True)
             for line in out.splitlines():
-                if "hermes -z" not in line or "defunct" in line or "grep" in line:
+                if not is_hermes_session_line(line):
                     continue
                 parts = line.split()
                 if len(parts) < 11:
@@ -207,7 +220,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 try:
                     out = subprocess.check_output(["ps", "aux"], timeout=5, text=True)
                     for line in out.splitlines():
-                        if "hermes -z" not in line or "defunct" in line or "grep" in line:
+                        if not is_hermes_session_line(line):
                             continue
                         parts = line.split()
                         if len(parts) < 11: continue
@@ -253,7 +266,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         html = f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<title>ralph-loop heartbeat</title>
+<title>Remote Agent Dashboard</title>
 <style>
 body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:24px;color:#202124}}
 table{{border-collapse:collapse;width:100%;margin-bottom:16px}}
@@ -268,7 +281,7 @@ pre, .log-pane{{font-size:12px;background:#f8f9fa;padding:12px;border:1px solid 
 <script>var t=15;function c(){{document.getElementById("cd").textContent=t;if(t--<=0)location.reload();else setTimeout(c,1000)}}</script>
 </head><body onload="c()">
 {warn_html}
-<h2 style="margin:0 0 4px 0;font-size:18px;color:#202124">ralph-loop heartbeat</h2>
+<h2 style="margin:0 0 4px 0;font-size:18px;color:#202124">Remote Agent Dashboard</h2>
 <div style="color:#5f6368;font-size:13px;margin-bottom:16px">{len(sessions)} active session(s){f' ({stale_count} stale ≥8m)' if stale_count else ''}</div>
 {('<div style="background:#e8f5e9;color:#137333;padding:8px;border-radius:4px;margin-bottom:12px;font-size:13px">'+cleanup_msg+'</div>') if cleanup_msg else ''}
 <table>
@@ -311,7 +324,7 @@ pre, .log-pane{{font-size:12px;background:#f8f9fa;padding:12px;border:1px solid 
         try:
             out = subprocess.check_output(["ps", "aux"], timeout=5, text=True)
             for line in out.splitlines():
-                if "hermes -z" in line and "defunct" not in line and "grep" not in line:
+                if is_hermes_session_line(line):
                     parts = line.split()
                     if len(parts) >= 2:
                         try:
