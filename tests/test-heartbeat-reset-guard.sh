@@ -33,7 +33,7 @@ done
 
 # Dashboard renders.
 body=$(curl -s "http://127.0.0.1:$PORT/")
-printf '%s' "$body" | grep -q "ralph-loop heartbeat" || fail "dashboard did not render"
+printf '%s' "$body" | grep -q "Remote Agent Dashboard" || fail "dashboard did not render"
 
 # Any GET on /reset must only confirm, never act (prefetch + <img> CSRF).
 for path in "/reset" "/reset?confirm=1"; do

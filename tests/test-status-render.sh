@@ -89,7 +89,7 @@ grep -q 'http-equiv="refresh"' "$FAKE_HOME/ralph-status.html" || fail "HTML miss
 grep -q 'content="60"' "$FAKE_HOME/ralph-status.html" || fail "HTML refresh interval != 60s"
 
 # --- AC 7: HTML page title ---
-grep -q "<title>ralph-loop heartbeat</title>" "$FAKE_HOME/ralph-status.html" || fail "HTML page title != 'ralph-loop heartbeat'"
+grep -q "<title>Remote Agent Dashboard</title>" "$FAKE_HOME/ralph-status.html" || fail "HTML page title != 'Remote Agent Dashboard'"
 
 # --- AC 8: next_tick is computable as last_tick + 5 minutes (informational) ---
 # We don't render a static next_tick per call (it changes between renders),
