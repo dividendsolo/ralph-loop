@@ -45,6 +45,11 @@ PROMPT="Use the engineer skill to pick up and carry EXACTLY ONE ticket forward o
 # Hermes/MiniMax-M3 if the primary refuses with the Anthropic weekly rate limit.
 # shellcheck source=ralph-dispatch
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-dispatch"
+# Source the heartbeat recorder so we can stamp every iteration's outcome into
+# ~/ralph-status.json + ~/ralph-status.html for the dashboard. record_heartbeat
+# lives in bin/ralph-status and needs the same env as a sourced call.
+# shellcheck source=ralph-status
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ralph-status"
 
 cd "$REPO" || { echo "engineer-ralph: repo not found: $REPO (set RALPH_REPO)" >&2; exit 1; }
 
@@ -87,8 +92,10 @@ for ((i=1; i<=N; i++)); do
     rc=$?
     result="$RALPH_DISPATCH_OUTPUT"
 
-    # Extract ticket from output and write to live status file for dashboard
-    local ticket_id
+    # Extract ticket from output and write to live status file for dashboard.
+    # NOT `local`: this block is at script body, not inside a function, and
+    # `local` here silently prints `local: can only be used in a function`
+    # (LEARNINGS ENG-182) while still working in global scope.
     ticket_id=$(printf '%s' "$result" | grep -oP 'ENG-\d+' 2>/dev/null | head -1)
     [ -n "$ticket_id" ] && printf '%s\n' "$ticket_id" > "$HOME/.engineer-current-ticket"
     # Success is judged by OUTPUT, not exit code. hermes -z exits non-zero even
@@ -107,13 +114,26 @@ for ((i=1; i<=N; i++)); do
 
   if [ -z "${result//[[:space:]]/}" ]; then
     log "===== iteration $i: dispatch produced no output after 2 attempts (last exit $rc); skipping. ====="
+    # Even on a hard dispatch failure the dashboard must record the tick so the
+    # operator sees "something tried and failed" rather than a blank cell. Pass
+    # a non-"exit 0" detail so record_heartbeat classifies this as `failed`
+    # (per the loop-integration test contract AC 3, "startup crash" is failed
+    # regardless of dispatch rc).
+    record_heartbeat worker "$(basename "$REPO")" "" "dispatch produced no output after retries (rc=$rc)"
     failures=$((failures + 1))
     continue
   fi
 
   log "$result"
+  # Record the heartbeat for the dashboard BEFORE checking for the NO_TICKETS
+  # token, so an iteration that ran a ticket still gets the cell stamped. The
+  # recorder reads RALPH_DISPATCH_TIER exported by the dispatcher.
+  # Leg is `worker` (matches the loop-integration test contract; `engineer` is
+  # the script's CLI name, `worker` is the dashboard-leg label for the same
+  # role). See LEARNINGS follow-up card ENG-181 for the original split.
+  record_heartbeat worker "$(basename "$REPO")" "$result" "exit $rc"
   if [ "$rc" -ne 0 ]; then
-    log "(note: dispatch exit $rc on a ticket that produced output — expected; success judged by output, not exit code.)"
+    log "(note: dispatch exit $rc on a ticket that produced output; expected; success judged by output, not exit code.)"
   fi
 
   if [[ "$result" == *"<promise>NO_TICKETS</promise>"* ]]; then

@@ -56,6 +56,15 @@
 
 set -uo pipefail
 
+# Canonical tier table. Tier 0 is the primary (Opus 4.8); tier 2 is the Hermes
+# fallback. Both filenames and the on-disk state file use the same numbers, so
+# the renderer (bin/ralph-status) and the heartbeat server (bin/heartbeat_server.py)
+# agree with the dispatcher.
+TIER_PRIMARY=0
+TIER_PRIMARY_NAME="Opus 4.8"
+TIER_FALLBACK=2
+TIER_FALLBACK_NAME="Hermes/MiniMax-M3"
+
 # Per-profile Hermes dispatch (ENG-133). When a leg exports RALPH_REPO_NAME
 # (e.g. "skills"), prefer the per-profile wrapper `hermes-<repo>` if it is
 # on PATH; otherwise fall back to bare `hermes`. The loop must keep working
@@ -77,6 +86,20 @@ _hermes_cmd() {
 
 # Per-role primary dispatch. Returns the captured stdout via the global
 # RALPH_DISPATCH_OUTPUT and the exit code via stdout of the function.
+# Side effects:
+#   - On primary success: writes $HOME/.${loop_name}-rate-limited with
+#     "$TIER_PRIMARY" and exports RALPH_DISPATCH_TIER=$TIER_PRIMARY and
+#     RALPH_DISPATCH_TIER_NAME=$TIER_PRIMARY_NAME. The renderer reads both the
+#     state file (for tick-to-tick continuity) and the export (for the current
+#     tick's tier label).
+#   - On rate-limit detection: writes "$TIER_FALLBACK" and exports
+#     RALPH_DISPATCH_TIER=$TIER_FALLBACK. The state file survives across ticks
+#     within the same loop run, so a detected limit short-circuits subsequent
+#     primaries (saves API calls). The loop clears the file at the start of
+#     every NEW tick (see engineer-ralph / review-ralph), so the moment the
+#     limit lifts, the next tick reverts to primary automatically.
+#   - When the state file already exists (pre-existing fallback): skip primary
+#     entirely, export tier 2.
 # Usage: dispatch_role <reviewer|engineer> "$PROMPT"
 dispatch_role() {
   local role="$1"
@@ -90,9 +113,25 @@ dispatch_role() {
   local hermes_cmd
   hermes_cmd="$(_hermes_cmd)"
 
-  # State file is only relevant for Claude Code rate limits. Since both
-  # roles use Hermes (no Claude Code), clear it and always try primary.
-  [ -f "$state_file" ] && rm -f "$state_file"
+  # If the state file already holds a fallback tier, skip primary entirely.
+  # The state file is the per-tick continuity flag: primary writes 0 on success,
+  # a rate-limit detection writes 2 (with a reset epoch if known), and the loop
+  # clears it at the start of every new tick.
+  if [ -f "$state_file" ]; then
+    existing=$(cat "$state_file" 2>/dev/null || echo "")
+    if [ "$existing" = "$TIER_FALLBACK" ]; then
+      used_fallback=1
+      printf '%s\n' "===== FALLBACK: state file at $state_file already marks tier $TIER_FALLBACK; skipping primary =====" | tee -a "$log"
+      output=$($hermes_cmd -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
+      rc=$?
+      RALPH_DISPATCH_OUTPUT="$output"
+      RALPH_DISPATCH_TIER="$TIER_FALLBACK"
+      RALPH_DISPATCH_TIER_NAME="$TIER_FALLBACK_NAME"
+      printf '%s' "$TIER_FALLBACK" > "$state_file"
+      printf '%s\n' "===== FALLBACK done (rc=$rc) =====" | tee -a "$log" >&2
+      return "$rc"
+    fi
+  fi
 
   if [ "${RALPH_FORCE_FALLBACK:-0}" = "1" ]; then
     used_fallback=1
@@ -100,9 +139,10 @@ dispatch_role() {
     RALPH_DISPATCH_OUTPUT=$($hermes_cmd -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
     rc=$?
   else
-    # PRIMARY: both roles use Hermes. Same model, same behavior, no rate-limit
-    # drama. The rate-limit timestamp fallback is preserved for future Claude Code
-    # use but won't fire today.
+    # PRIMARY: both roles use Hermes today. The dispatcher records the tier
+    # used on every primary success so the renderer (bin/ralph-status) and the
+    # heartbeat server (bin/heartbeat_server.py) can show "Opus 4.8" instead of
+    # guessing.
     case "$role" in
       reviewer|engineer)
         output=$($hermes_cmd -z "$prompt" --yolo --accept-hooks 2>&1 | tee -a "$HOME/.hermes-live-output")
@@ -134,10 +174,10 @@ dispatch_role() {
         if [ -n "$reset_epoch" ]; then
           printf '%s' "$reset_epoch" > "$state_file"
         else
-          : > "$state_file"
+          printf '%s' "$TIER_FALLBACK" > "$state_file"
         fi
       else
-        : > "$state_file"
+        printf '%s' "$TIER_FALLBACK" > "$state_file"
       fi
       output=$($hermes_cmd -z "$prompt" --yolo --accept-hooks -m MiniMax-M3 --provider minimax 2>&1 | tee -a "$HOME/.hermes-live-output")
       rc=$?
@@ -146,6 +186,15 @@ dispatch_role() {
   fi
 
   RALPH_DISPATCH_OUTPUT="$output"
+  if [ "$used_fallback" = "1" ]; then
+    RALPH_DISPATCH_TIER="$TIER_FALLBACK"
+    RALPH_DISPATCH_TIER_NAME="$TIER_FALLBACK_NAME"
+    printf '%s' "$TIER_FALLBACK" > "$state_file"
+  else
+    RALPH_DISPATCH_TIER="$TIER_PRIMARY"
+    RALPH_DISPATCH_TIER_NAME="$TIER_PRIMARY_NAME"
+    printf '%s' "$TIER_PRIMARY" > "$state_file"
+  fi
   # Always log the fallback disposition at the end so the activation trail is
   # visible even if the loop script suppresses intermediate output.
   if [ "$used_fallback" = "1" ]; then
