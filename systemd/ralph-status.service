@@ -18,6 +18,21 @@
 #
 #   sudo loginctl enable-linger "$USER"
 #
+# Reloading after a unit-file change:
+#
+#   The unit is installed by COPY, not symlink, so editing
+#   systemd/ralph-status.service in this repo does nothing on the box
+#   until the changed file is copied over and systemd re-reads it:
+#
+#     cp systemd/ralph-status.service "$HOME/.config/systemd/user/"
+#     systemctl --user daemon-reload
+#     systemctl --user restart ralph-status.service
+#
+#   Because the unit declares `Restart=always`, a plain `pkill` of the
+#   server process is ALSO a valid reload path: systemd treats any death
+#   as a restart trigger, so a code reload can be `pkill -f heartbeat_server.py`
+#   without the `daemon-reload` step. Use whichever is convenient.
+#
 # Uninstall:
 #
 #   systemctl --user disable --now ralph-status.service
@@ -42,7 +57,7 @@ WorkingDirectory=%h
 ExecStart=/usr/bin/env python3 %h/code/ralph-loop/bin/heartbeat_server.py
 StandardOutput=append:%h/ralph-status-server.log
 StandardError=append:%h/ralph-status-server.log
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]
