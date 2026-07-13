@@ -42,9 +42,12 @@ for path in "/reset" "/reset?confirm=1"; do
   printf '%s' "$reset_page" | grep -qi "reset complete" && fail "GET $path ACTED (killed sessions) instead of confirming"
 done
 
-# Cross-origin POST must be refused (403).
+# Cross-origin POST must be refused (403), and so must a POST with no
+# Origin/Referer at all (header-stripped CSRF).
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: http://evil.example" "http://127.0.0.1:$PORT/reset")
 [ "$code" = "403" ] || fail "cross-origin POST /reset expected 403, got $code"
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT/reset")
+[ "$code" = "403" ] || fail "origin-less POST /reset expected 403, got $code"
 
 # NOTE: a same-origin POST is deliberately NOT exercised here — _do_reset
 # kills real `hermes -z` processes via ps, and this test may run on the
