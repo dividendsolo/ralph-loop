@@ -65,7 +65,7 @@ done
 
 # --- AC: page is served with the expected content ---
 body="$(curl -fsS "http://127.0.0.1:$PORT/ralph-status.html")"
-echo "$body" | grep -q '<title>ralph-loop heartbeat</title>' \
+echo "$body" | grep -q '<title>Remote Agent Dashboard</title>' \
   || fail "served page missing title"
 echo "$body" | grep -q 'http-equiv="refresh"' \
   || fail "served page missing meta refresh"
