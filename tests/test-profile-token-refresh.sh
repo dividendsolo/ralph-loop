@@ -83,4 +83,50 @@ rm -rf "$TMP_HOME" "$TMP_BIN"
 
 echo "OK: refresh-profile-tokens.sh exits 0 with an informative log when no wrappers exist"
 
+
+# --- AC: when a wrapper AND its per-profile token exist, and the refresh
+# script honors LINEAR_TOKEN_PATH, the wrapper reports a real per-profile
+# refresh and exits 0 ---
+
+TMP_HOME="$(mktemp -d)"
+TMP_BIN="$(mktemp -d)"
+TMP_LOG="$TMP_HOME/refresh.log"
+
+ln -s /bin/true "$TMP_BIN/hermes-skills"
+
+# Mock refresh-linear-token.py that HONORS LINEAR_TOKEN_PATH: rewrites
+# exactly the file it is pointed at (like the real script post-patch).
+cat > "$TMP_BIN/refresh-linear-token.py" <<'PYEOF'
+#!/usr/bin/env python3
+import json, os, time
+tok = os.path.expanduser(os.environ.get("LINEAR_TOKEN_PATH") or "~/.hermes/mcp-tokens/linear.json")
+os.makedirs(os.path.dirname(tok), exist_ok=True)
+with open(tok, "w") as f:
+    json.dump({"access_token": "fresh", "refresh_token": "rotated", "t": time.time()}, f)
+PYEOF
+chmod +x "$TMP_BIN/refresh-linear-token.py"
+
+PER_PROFILE_DIR="$TMP_HOME/.hermes/profiles/skills/mcp-tokens"
+mkdir -p "$PER_PROFILE_DIR"
+echo '{"access_token":"old","refresh_token":"r"}' > "$PER_PROFILE_DIR/linear.json"
+
+set +e
+HOME="$TMP_HOME" PATH="$TMP_BIN:$SYSTEM_PATH" \
+  REFRESH_LINEAR_TOKEN_SCRIPT="$TMP_BIN/refresh-linear-token.py" \
+  bash "$SCRIPT" >"$TMP_LOG" 2>&1
+rc=$?
+set -e
+
+[ "$rc" = "0" ] || fail "per-profile happy path: expected exit 0, got $rc (log: $(cat "$TMP_LOG"))"
+grep -q "repo='skills' refreshed OK" "$TMP_LOG" \
+  || fail "per-profile happy path: no 'refreshed OK' for skills (log: $(cat "$TMP_LOG"))"
+grep -q '"access_token": "fresh"' "$PER_PROFILE_DIR/linear.json" \
+  || fail "per-profile happy path: per-profile token file was not rewritten"
+[ ! -e "$TMP_HOME/.hermes/mcp-tokens/linear.json" ] \
+  || fail "per-profile happy path: default token was written although only a per-profile token existed"
+
+rm -rf "$TMP_HOME" "$TMP_BIN"
+
+echo "OK: refresh-profile-tokens.sh genuinely refreshes a per-profile token via LINEAR_TOKEN_PATH"
+
 echo "PASS: per-profile token refresh wrapper"
