@@ -30,6 +30,25 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 sync_one() {
   local repo="$1"
   [ -n "$repo" ] && [ -d "$repo/.git" ] || { echo "ralph-sync: skip (not a git repo): $repo"; return 0; }
+  # Workers leave the checkout on their feature branch when an iteration ends;
+  # a plain pull then tracks the BRANCH, so main's skill/script updates never
+  # land and agents run stale playbooks (found via ENG-171: the reviewer kept
+  # Discord-pinging hours after the rule was removed on main). If the tree is
+  # clean, return to the default branch first; if dirty, leave the repo
+  # untouched — same safety contract as --ff-only below.
+  local default branch
+  default=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+  default=${default:-main}
+  branch=$(git -C "$repo" branch --show-current 2>/dev/null)
+  if [ -n "$branch" ] && [ "$branch" != "$default" ]; then
+    if [ -z "$(git -C "$repo" status --porcelain 2>/dev/null)" ]; then
+      git -C "$repo" checkout --quiet "$default" 2>/dev/null \
+        && echo "ralph-sync: $(basename "$repo") left on $branch by a worker — switched back to $default"
+    else
+      echo "ralph-sync: $(basename "$repo") on $branch WITH local changes — left untouched"
+      return 0
+    fi
+  fi
   local before after
   before=$(git -C "$repo" rev-parse --short HEAD 2>/dev/null)
   if git -C "$repo" pull --ff-only --quiet 2>/dev/null; then
