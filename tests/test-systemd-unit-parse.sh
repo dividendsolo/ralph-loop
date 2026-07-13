@@ -54,11 +54,12 @@ grep -q 'StandardOutput=append:%h/ralph-status-server.log' "$UNIT" \
 grep -q 'StandardError=append:%h/ralph-status-server.log' "$UNIT" \
   || fail "unit does not log errors to append:%h/ralph-status-server.log"
 
-# 5. Restart=on-failure + RestartSec must be present so a crash loops the
+# 5. Restart=always + RestartSec must be present so any death (crash or
+#    external SIGTERM, per skills#51) restarts the
 # server back up. Without these, an OOM kill takes the dashboard down until
 # the operator notices and restarts manually.
-grep -q 'Restart=on-failure' "$UNIT" \
-  || fail "unit missing Restart=on-failure; crash loops would be silent"
+grep -q 'Restart=always' "$UNIT" \
+  || fail "unit missing Restart=always; external SIGTERM deaths would be silent (skills#51)"
 grep -q 'RestartSec=' "$UNIT" \
   || fail "unit missing RestartSec; backoff unspecified"
 
